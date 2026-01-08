@@ -1,0 +1,22 @@
+# HFT Trading Tools - Dependencies
+
+# Core
+websockets>=12.0
+aiohttp>=3.9.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Database
+sqlite-utils>=3.35
+
+# Dashboard
+streamlit>=1.29.0
+plotly>=5.18.0
+
+# Utilities
+python-dateutil>=2.8.0
+
+# Optional: Sound (for sonification)
+# pygame>=2.5.0
