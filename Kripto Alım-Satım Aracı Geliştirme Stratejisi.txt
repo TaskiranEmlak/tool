@@ -1,0 +1,274 @@
+﻿Kripto Varlık Piyasalarında Veri Güdümlü Yüksek Frekanslı Ticaret Altyapısı ve Stratejik Araç Geliştirme Raporu
+Yönetici Özeti
+Finansal piyasaların, özellikle de kripto para ekosisteminin evrimi, "içgüdüsel" (discretionary) ticaretten, niceliksel ve veri güdümlü (quantitative/data-driven) sistemlere doğru geri döndürülemez bir kayma göstermektedir. Kullanıcının belirttiği üzere, fiyat hareketlerini içgüdüsel olarak tahmin etmek, aslında insan beyninin geçmiş veri setlerini bilinçaltında işlemesi ve desen tanıması (pattern recognition) sürecidir. Ancak bu biyolojik süreç, ölçeklenebilir değildir, geriye dönük test edilemez (non-backtestable) ve modern piyasaların mikrosaniye seviyesindeki verimsizliklerini yakalamakta yetersiz kalır. Bu rapor, içgüdüsel başarının yerini alacak, matematiksel kesinliğe dayalı, kurumsal düzeyde bir ticaret "aracı" (tool) ve altyapısı inşa etmek için gereken tüm parametreleri, teknik mimariyi ve stratejik vizyonu kapsamlı bir şekilde ele almaktadır.
+Raporumuz, emir akışı (Order Flow), kümülatif hacim deltası (CVD), emir defteri dengesizliği (Order Book Imbalance - OBI) ve likidasyon ısı haritaları (Liquidation Heatmaps) gibi derin piyasa mikroyapısı verilerinin nasıl işleneceğini analiz etmektedir. Ayrıca, bu verilerin Python ve Rust gibi diller kullanılarak, QuestDB ve ClickHouse gibi zaman serisi veritabanlarında nasıl saklanacağı ve işleneceği teknik detaylarıyla sunulmaktadır. Mevcut piyasa lideri araçlar (Bookmap, TRDR, Aggr.trade) incelenerek, bu araçların eksiklikleri belirlenmiş ve kullanıcının "kendi aracını yapma" vizyonuna uygun, hibrit ve üstün bir mimari önerilmiştir.
+________________
+Bölüm I: İçgüdüden Veriye Geçiş - Piyasa Mikroyapısının Fiziği
+İçgüdüsel ticaretin yerini alacak bir araç tasarlamak için öncelikle piyasanın "fizik kurallarını" anlamak gerekir. Kripto piyasalarında fiyat, sadece bir sonuçtur; neden ise likidite sağlayıcılar (Limit Emirler) ile likidite tüketiciler (Piyasa Emirleri) arasındaki etkileşimdir.
+1.1 Fiyat Oluşum Mekanizması ve Veri Hiyerarşisi
+Bir ticaret aracının başarısı, işlediği verinin derinliğine bağlıdır. Çoğu perakende tüccar sadece "fiyat" (L1 Verisi) ile ilgilenirken, profesyonel araçlar L2 ve L3 verilerini işler.
+* Level 1 (En İyi Alış/Satış): Sadece anlık en iyi fiyatı gösterir. İçgüdüsel ticaret genellikle buna dayanır ve yetersizdir.
+* Level 2 (Emir Defteri Derinliği - DOM): Belirli bir fiyat seviyesindeki bekleyen limit emirlerin toplam hacmini gösterir. Bu, piyasanın "niyetini" ortaya koyar.
+* Level 3 (Emir Bazlı Veri - MBO): Her bir emrin kuyruktaki yerini, boyutunu ve zamanını gösterir. Örneğin, büyük bir emrin "buzdağı" (iceberg) olup olmadığını veya "spoofing" (aldatmaca) amacıyla konulup konulmadığını anlamak için bu veri gereklidir.1
+Öneri: Geliştireceğimiz araç, sadece fiyatı değil, emir defterinin "dokunuşunu" (texture) analiz etmelidir. Bu, fiyatın bir seviyeye yaklaştığında emirlerin geri çekilip çekilmediğini (pulling liquidity) veya üzerine ekleme yapılıp yapılmadığını (stacking) milisaniye bazında takip etmek anlamına gelir.
+1.2 Kümülatif Hacim Deltası (CVD) ve Agresif Akış
+CVD, içgüdüsel olarak hissedilen "alış baskısı" veya "satış baskısı"nın matematiksel karşılığıdır. Piyasa katılımcılarının ne kadar agresif olduğunu ölçer.
+* Mekanizma: CVD, piyasa emriyle (market order) gerçekleşen alış hacminden, satış hacminin çıkarılmasıyla hesaplanır.
+
+$$CVD_t = CVD_{t-1} + (V_{buy} - V_{sell})$$
+* Stratejik İçgörü (Alpha):
+   * Uyumsuzluk (Divergence): Fiyat yeni bir dip yaparken CVD yatay kalıyorsa veya yükseliyorsa, bu "absorpsiyon" (emilim) işaretidir. Yani agresif satıcılar piyasaya vurmaktadır ancak pasif alıcılar (limit emirler) bu satışı karşılamaktadır. İçgüdüsel olarak "buradan dönmeli" dediğiniz anın verisel kanıtı budur.2
+   * Tükeniş (Exhaustion): Fiyat yükselirken CVD'nin düşmesi veya tam tersi durumlar, hareketin arkasındaki yakıtın bittiğini gösterir.
+Tasarım Parametresi: Aracımızda CVD sadece bir çizgi grafiği olmamalıdır. Sistem, "Delta Divergence" tespit ettiğinde (örneğin; Fiyat $\Delta < 0$ iken CVD $\Delta > 0$ ve Korelasyon < 0.3) görsel ve işitsel alarm vermelidir. Ayrıca, borsalar arası (Binance vs Coinbase) CVD farklarını (Delta spread) izleyerek, kurumsal akışın hangi borsadan geldiğini tespit edebiliriz.4
+________________
+Bölüm II: Kritik Parametreler ve Sinyal Mekanizmaları
+Kullanıcının "en iyi parametreler nelerdir?" sorusuna cevaben, literatürdeki en öngörücü (predictive) metrikleri derledik. Bu parametreler, fiyat hareketini gerçekleşmeden önce (leading indicator) işaret etme potansiyeline sahiptir.
+2.1 Emir Defteri Dengesizliği (Order Book Imbalance - OBI)
+OBI, kısa vadeli fiyat hareketlerinin en güçlü öncü göstergelerinden biridir. Fiyatın nereye gitmek "istediğini" değil, likiditenin fiyatı nereye "ittiğini" gösterir.
+   * Formülasyon:
+
+$$\rho = \frac{V_b - V_a}{V_b + V_a}$$
+
+Burada $V_b$ en iyi $n$ kademedeki alış hacmi, $V_a$ ise satış hacmidir. $\rho$ değeri +1'e yaklaştıkça güçlü alış baskısı, -1'e yaklaştıkça satış baskısı vardır.5
+   * Derinlik Analizi: Sadece "en iyi" fiyat (Best Bid/Offer) yeterli değildir. Aracımız, derinlik ağırlıklı bir OBI hesaplamalıdır. Fiyata yakın emirlerin ağırlığı (decay factor) daha yüksek olmalıdır, çünkü uzaktaki emirlerin gerçekleşme ihtimali düşüktür ve manipülasyon (spoofing) olma ihtimali yüksektir.6
+   * Kullanım Senaryosu: Aracınız, OBI değeri +0.3'ün üzerine çıktığında ve aynı anda CVD pozitif eğilime geçtiğinde "Long Scalp" sinyali üretmelidir. Bu, hem niyetin (Emir Defteri) hem de eylemin (CVD) aynı yönde olduğunu doğrular.7
+2.2 Likidasyon Isı Haritaları (Liquidation Heatmaps) ve Mıknatıs Teorisi
+Kripto piyasaları yüksek kaldıraç içerdiği için, "zorunlu kapanışlar" (likidasyonlar) fiyat hareketinin yakıtıdır.
+      * Mıknatıs Etkisi: Piyasa yapıcılar ve yüksek frekanslı algoritmalar, likiditenin yoğun olduğu bölgelere fiyatı iterek kendi büyük pozisyonlarını doldurmak isterler. Bu bölgeler genellikle perakende yatırımcıların stop-loss seviyeleri veya likidasyon noktalarıdır.8
+      * Hesaplama Yöntemi: Aracımız, Açık Pozisyon (Open Interest - OI) verilerini ve borsaların kaldıraç profillerini kullanarak tahmini likidasyon seviyelerini hesaplamalıdır. Örneğin, fiyat $50.000 iken OI'da büyük bir artış olmuşsa, bu pozisyonların 50x kaldıraçla $49.000 seviyesinde, 100x kaldıraçla $49.500 seviyesinde likide olacağı tahmin edilebilir.
+      * Görselleştirme: Isı haritasında sarı/kırmızı bölgeler "yüksek tehlike" ve "yüksek çekim" bölgeleridir. Strateji, fiyat bu bölgelere hızla girdiğinde tersine işlem açmak (mean reversion) veya bu bölgeye gidişatı momentum olarak kullanmaktır.8
+2.3 Fonlama Oranları ve Açık Pozisyon (OI) Anomalileri
+      * Açık Pozisyon (Open Interest): Piyasaya giren yeni parayı temsil eder. Fiyat artarken OI artıyorsa trend sağlıklıdır (yeni longlar). Fiyat artarken OI düşüyorsa, trend zayıftır (short covering - short pozisyonların kapanması).9
+      * Fonlama Arbitrajı: Farklı borsalar arasındaki fonlama oranı farkları, risksiz getiri fırsatı sunar. Aracımız, Binance ve Bybit arasındaki fonlama farkını izleyerek, yüksek fonlama ödeyen borsada short, düşük ödeyen borsada long açarak "delta-nötr" getiri fırsatlarını tarayabilir.10
+________________
+Bölüm III: Mevcut Araçların Analizi ve "Gap" (Boşluk) Analizi
+Piyasada var olan araçları (Bookmap, TRDR, Aggr.trade, Exocharts) inceleyerek, kullanıcının yapacağı aracın neden daha iyi olabileceğini belirledik.
+3.1 Karşılaştırmalı Matris
+
+
+Özellik
+	Bookmap
+	Aggr.trade
+	Exocharts
+	TRDR
+	Sizin Aracınızın Hedefi
+	Görselleştirme
+	Isı Haritası & Hacim Baloncukları
+	Akan Bant & Ses
+	Footprint & Profil
+	Likidasyon & OI
+	Hibrit Dashboard & Otomasyon
+	Veri İşleme
+	Nanoyapı (MBO)
+	İşlem bazlı (Tick)
+	Mum içi (Cluster)
+	Borsa geneli
+	Milisaniye & Çapraz Borsa
+	Güçlü Yönü
+	Limit emirleri görme
+	Piyasa hızını "duyma"
+	Delta analizi
+	Sıkışma (Squeeze) tahmini
+	Sinyal Otomasyonu
+	Eksikliği
+	Otomasyon zor, pahalı
+	Sadece izleme, işlem yok
+	Öğrenme eğrisi dik
+	Web tabanlı gecikme
+	Gecikmesiz İcra (Execution)
+	3.2 "Hayal Et": Yenilikçi Özellikler ve Fırsatlar
+Kullanıcının "hayal et" direktifi doğrultusunda, mevcut araçlarda bulunmayan veya eksik olan, ancak teknolojik olarak mümkün olan özellikler:
+      1. Sonifikasyon (Piyasa Sesi) 2.0: Aggr.trade basit sesler kullanır. Sizin aracınız, piyasa verilerini bir orkestraya dönüştürebilir. Alış baskısı keman sesiyle, satış baskısı davul sesiyle artan tempoda verilebilir. Bu, ekrana bakmadan piyasa "hissini" (kullanıcının içgüdüsü) duyu organlarına iletir.12
+      2. Yapay Zeka Destekli Duygu Analizi (Sentiment AI): LunarCrush veya Santiment gibi API'lar yerine, kendi "hafif" (lightweight) LLM modelinizi çalıştırarak Twitter ve Haber başlıklarını anlık tarayıp -1 ile +1 arasında bir "Duygu Skoru" üretebilirsiniz. Bu skor, OBI verisiyle birleştiğinde (örneğin; Kötü Haber + Güçlü Emir Defteri Desteği = Manipülasyon/Dip) çok güçlü sinyaller üretir.16
+      3. MEV Koruma Kalkanı: Aracınız, işlemlerinizi halka açık mempool'a göndermek yerine, Flashbots gibi özel aktarıcılar (relayers) üzerinden doğrudan madencilere göndererek "Sandwich" saldırılarından korunmanızı sağlayabilir.18
+      4. Wash Trading Filtresi: Borsaların hacimlerini şişirmek için yaptığı sahte işlemleri (Wash Trading) temizleyen bir algoritma. Benford Yasası'na uymayan hacim verilerini analizden çıkararak "gerçek" piyasa talebini görebilirsiniz.19
+________________
+Bölüm IV: Teknik Mimari ve Mühendislik
+"Çok derinlemesine ve çok iyi" bir araç yapmak için sıradan bir Python scripti yeterli değildir. Yüksek frekanslı veri işleme (HFT) prensiplerini benimseyen bir mimari gereklidir.
+4.1 Yazılım Dili Seçimi: Hibrit Yaklaşım
+      * Python: Veri analizi, strateji prototipleme ve yapay zeka entegrasyonu için endüstri standardıdır. ccxt, pandas, web3.py gibi kütüphaneler geliştirme hızını artırır. Ancak, Global Interpreter Lock (GIL) nedeniyle gerçek zamanlı, mikrosaniye hassasiyetli emir iletiminde yavaş kalabilir.21
+      * Rust: Hız ve güvenlik için modern standart. Özellikle "Execution Engine" (Emir İletim Motoru) ve WebSocket veri beslemesi için Rust kullanılması, gecikmeyi (latency) milisaniye altına düşürebilir.
+      * Öneri: Hibrit Mimari. Veri toplama ve emir iletimi gibi kritik parçaları Rust ile yazın. Strateji mantığını, veritabanı sorgularını ve kullanıcı arayüzünü (Dashboard) Python ile geliştirin. İkisi arasında gRPC veya Redis üzerinden haberleşme sağlayın.23
+4.2 Veritabanı Teknolojisi: Zaman Serisi (Time-Series)
+Milyonlarca "tick" verisini saklamak ve anlık sorgulamak için standart SQL veritabanları (MySQL, PostgreSQL) yetersiz kalır.
+      * QuestDB: Yüksek performanslı, açık kaynaklı bir zaman serisi veritabanıdır. Saniyede milyonlarca satır veri yazma (ingestion) kapasitesine sahiptir ve finansal veriler için optimize edilmiştir. Canlı veriyi yakalamak için en iyi seçenektir.25
+      * ClickHouse: Analitik sorgular (OLAP) için mükemmeldir. Geçmişe dönük strateji testleri (backtesting) ve büyük veri analizi için QuestDB'den toplanan verilerin arşivlendiği yer olmalıdır.26
+      * Tavsiye: Canlı veri akışı için QuestDB, geçmiş veri analizi ve strateji optimizasyonu için ClickHouse kullanın.
+4.3 Bağlantı ve Gecikme (Latency) Optimizasyonu
+      * WebSocket Yönetimi: REST API yerine kesinlikle WebSocket kullanılmalıdır. Ancak WebSocket bağlantıları kopabilir. Aracınızın "Heartbeat" mekanizması olmalı ve bağlantı koptuğunda milisaniyeler içinde yeniden bağlanabilmelidir.
+      * Co-Location (Konumlandırma): Borsaların sunucularına yakın sunucular kiralamak. Örneğin, Binance sunucuları Tokyo'dadır (AWS Tokyo). Botunuzu AWS Tokyo bölgesinde barındırmak, emrinizin diğerlerinden 50-100ms daha hızlı ulaşmasını sağlar.27
+________________
+Bölüm V: Geliştirilecek Stratejiler ve Algoritmalar
+Veriyi topladık, şimdi bu veriyle ne yapacağımızı, yani "stratejiyi" belirleyelim.
+5.1 Arbitraj Algoritmaları
+      * Üçgen Arbitraj (Triangular Arbitrage): Tek bir borsa içinde pariteler arası dengesizlikten faydalanma. Örneğin: BTC -> ETH -> USDT -> BTC döngüsü. Python kütüphaneleri (ccxt) ile graf teorisi (Bellman-Ford algoritması) kullanılarak kârlı döngüler taranabilir.28
+      * İstatistiksel Arbitraj: İki korele varlık (örneğin BTC ve ETH) arasındaki fiyat farkının (spread) tarihsel ortalamadan sapmasını bekleyip, ortalamaya dönüş (mean reversion) oynamak.
+5.2 MEV ve Sniper Stratejileri (İleri Seviye)
+      * Mempool Tarama: Ethereum gibi ağlarda işlemler bloğa girmeden önce "bekleme odasında" (mempool) bekler. Aracınız burayı tarayarak büyük bir alım emrini (whale buy) tespit edebilir.
+      * Front-Running (Önüne Geçme): Büyük alımı gördüğü anda, daha yüksek gas ücreti ödeyerek aynı bloğa, o emirden hemen önce kendi alım emrini sokar. Fiyat yükseldiğinde ise hemen satar (Sandwich Attack). Bu strateji etik tartışmalara açık olsa da, piyasa mikroyapısının en saf halidir.30
+5.3 Algoritmik Piyasa Yapıcılık (Market Making)
+      * Strateji: Sürekli olarak hem alış hem satış tarafına limit emirler girerek "spread" (alış-satış farkı) kazanmak.
+      * Risk Yönetimi: OBI verisini kullanarak, eğer alış tarafında yığılma varsa (fiyatın düşmesi zor), alış emirlerini daha agresif, satış emirlerini daha pasif tutmak (Skewing the quotes).
+________________
+Bölüm VI: "Tanrı Modu" (God Mode) Dashboard Tasarımı
+Kullanıcının "her şeyi görebileceği" arayüz tasarımı.
+      1. Ana Grafik: Mum grafiği üzerinde Likidasyon Isı Haritası ve VWAP (Hacim Ağırlıklı Ortalama Fiyat) bantları.
+      2. Alt Osilatörler:
+      * Net CVD: Binance ve Coinbase CVD farkı.
+      * OBI Göstergesi: -1 ile +1 arasında salınan, emir defteri dengesini gösteren osilatör.
+      3. Yan Panel (Metrikler):
+      * Tahmini Kaldıraç Oranı: Piyasadaki ortalama kaldıraç (Open Interest / Market Cap).
+      * Anomali Skorları: Benford Yasası ve Hacim/Fiyat uyumsuzluğundan üretilen "Güven Skoru".
+      4. Haber Akışı: AI tarafından filtrelenmiş, sadece "piyasa hareketlendirici" etkisi olan haberler ve duygu skorları (+/-).
+________________
+Sonuç ve Yol Haritası
+İçgüdüsel ticareti bırakıp verisel bir imparatorluk kurmak, sadece bir yazılım projesi değil, bir felsefe değişimidir. Bu rapor, basit bir botun ötesinde, hedge fonların kullandığı teknolojilerin bireysel ölçekte nasıl uygulanacağını göstermektedir.
+Uygulama Adımları:
+      1. Veri Toplama (1. Ay): Python ve ccxt kullanarak Binance ve diğer borsalardan WebSocket ile veri çekip QuestDB'ye yazan "Collector" modülünü yazın.
+      2. Görselleştirme (2. Ay): Toplanan veriyi Streamlit veya Grafana kullanarak görselleştirin. OBI ve CVD hesaplamalarını doğrulayın.
+      3. Simülasyon (3. Ay): Geçmiş veriler üzerinde stratejilerinizi (Arbitraj, Scalping) test edin (Backtesting). Komisyon ve gecikme (latency) maliyetlerini hesaba katın.
+      4. Canlı Uygulama (4. Ay): Rust ile yazılmış "Execution Engine"i devreye alın ve küçük bakiyelerle (paper trading -> live trading) sisteminizi başlatın.
+Bu araç, piyasanın gürültüsü içinde size "sinyali" verecek olan dijital duyu organınız olacaktır. "Her şey sende" diyerek belirttiğiniz özgürlük, bu teknik derinlikle birleştiğinde gerçek bir piyasa avantajına (Edge) dönüşecektir.
+________________
+Veri Tabloları ve Referanslar
+Tablo 1: Veritabanı Teknolojisi Karşılaştırması
+
+
+Veritabanı
+	Birincil Kullanım
+	Yazma Hızı
+	Sorgu Hızı
+	Tavsiye
+	QuestDB
+	Canlı Tick Verisi
+	Çok Yüksek
+	Yüksek
+	Canlı Veri Yakalama İçin En İyisi 25
+	TimescaleDB
+	Genel Zaman Serisi
+	Orta
+	Orta (SQL)
+	SQL entegrasyonu kolaysa tercih edilebilir
+	ClickHouse
+	Tarihsel Analiz
+	Yüksek (Toplu)
+	Çok Yüksek
+	Backtest ve Analitik İçin En İyisi 26
+	Tablo 2: Emir Defteri Dengesizliği (OBI) Yorumlama
+OBI Değeri (ρ)
+	Piyasa Durumu
+	Muhtemel Fiyat Hareketi
+	Strateji
+	> +0.5
+	Güçlü Alış Desteği
+	Boğa (Yukarı baskı)
+	Long Scalp / Düşüşte Al
+	+0.1 ile +0.5
+	Hafif Alış İlgisi
+	Nötr/Boğa
+	Tut / İzle
+	-0.1 ile +0.1
+	Denge
+	Yatay
+	Ortalamaya Dönüş (Mean Reversion)
+	-0.5 ile -0.1
+	Hafif Satış İlgisi
+	Nötr/Ayı
+	Dikkatli Ol / Stopları Sıkılaştır
+	< -0.5
+	Güçlü Satış Duvarı
+	Ayı (Aşağı baskı)
+	Short Scalp / Yükselişte Sat
+	________________
+Bölüm VII: İleri Düzey Teknik Detaylar ve Uygulama Kılavuzu
+Bu bölümde, raporun önceki kısımlarında ana hatları çizilen stratejilerin ve altyapının kod düzeyinde ve matematiksel modellemesinde nasıl hayata geçirileceğine dair derinlemesine teknik detaylar sunulacaktır. Kullanıcının "en iyi parametreler" arayışına, akademik ve pratik finans mühendisliği perspektifinden yanıt verilecektir.
+7.1 Emir Defteri Modellemesi ve Ağırlıklı OBI Hesaplaması
+Standart OBI formülü ($\frac{V_b - V_a}{V_b + V_a}$), emir defterindeki tüm seviyelere eşit ağırlık verir. Ancak piyasa gerçekliğinde, fiyata en yakın emirler (L1-L5), 20 kademe uzaktaki emirlere göre çok daha önemlidir. Uzaktaki emirler genellikle manipülatiftir veya fiyat oraya gelene kadar iptal edilir. Bu nedenle, Ağırlıklı OBI (Weighted OBI) kullanmak, içgüdüsel hassasiyeti yakalamak için kritiktir.
+Gelişmiş Formül:
+Emir defterindeki her seviye ($i$) için bir ağırlık katsayısı ($w_i$) belirlenir. Genellikle üssel azalan (exponential decay) bir fonksiyon kullanılır:
+
+
+$$w_i = e^{-k \cdot (i-1)}$$
+Burada $k$, ağırlığın ne kadar hızlı azalacağını belirleyen "sönümleme" katsayısıdır (örneğin 0.5).
+
+
+$$Weighted\_OBI = \frac{\sum (V_{b,i} \cdot w_i) - \sum (V_{a,i} \cdot w_i)}{\sum (V_{b,i} \cdot w_i) + \sum (V_{a,i} \cdot w_i)}$$
+Bu formül, fiyata yakın likidite değişimlerine çok daha duyarlı, uzaktaki "fake" duvarlara karşı ise dirençli bir sinyal üretir.5
+Uygulama İpucu: Python'da pandas kullanarak bu ağırlıklandırmayı vektörel işlemlerle milisaniyeler içinde yapabilirsiniz. Ancak HFT (Yüksek Frekanslı Ticaret) seviyesinde bu hesaplama Rust veya C++ ile yapılmalı ve sonuçlar WebSocket yayını ile arayüze iletilmelidir.
+7.2 Likidasyon Kaskadlarının Tespiti ve İşlenmesi
+Likidasyonlar, piyasada "fiyatın gitmek zorunda olduğu" seviyeleri belirler. Bu veriyi işlemek için borsaların ham likidasyon verilerini (örneğin Binance forceOrder stream) dinlemek yetmez; bu veriyi birikimli bir haritaya dönüştürmek gerekir.
+Algoritma Mantığı:
+      1. Veri Yakalama: Borsadan gelen her trade verisi içinde, eğer borsa sağlıyorsa (örneğin Bybit), işlemin bir likidasyon olup olmadığını kontrol et. Sağlamıyorsa, aggr.trade mantığıyla, fiyatın tersine (örneğin düşüşte) çok büyük hacimli piyasa alımları (market buy) olup olmadığına bakarak "tahmini likidasyon" tespiti yap.
+      2. Kümeleme (Clustering): Belirli bir fiyat aralığındaki (örneğin %0.5'lik dilimler) likidasyonları topla.
+      3. Zaman Aşımı (Decay): Eski likidasyon seviyelerinin önemini zamanla azalt. Bir hafta önceki likidasyon seviyesi, bugünkü kadar önemli değildir.
+      4. Görselleştirme: Isı haritasında bu kümeleri renk yoğunluğu (Alpha blending) ile göster.
+Stratejik Hamle: Fiyat, yoğun bir likidasyon kümesine (%1-2 derinlikte) hızla yaklaşıyorsa, bu kümenin hemen arkasına limit emir yerleştirmek (Stop run avcılığı), profesyonel traderların en sık kullandığı stratejidir. Fiyat likidasyonları patlatır (sizin emrinizi doldurur) ve ardından "yakıt bittiği" için tersine döner (mean reversion).8
+7.3 Piyasa Manipülasyonunu Saptama: Benford Yasası ve Wash Trading
+Kullanıcının "doğru parametrelere bakmak" isteği, verinin temizliğini de kapsar. Kripto piyasalarında hacmin büyük kısmı sahte olabilir (Wash Trading). Bunu tespit etmek için adli muhasebede kullanılan Benford Yasası'nı ticarete uyarlayabiliriz.
+Teori: Doğal olarak oluşan sayısal veri setlerinde (işlem hacimleri gibi), ilk basamağın '1' olma olasılığı yaklaşık %30.1 iken, '9' olma olasılığı %4.6'dır. İnsan eliyle veya basit botlarla üretilen sahte hacimler bu dağılıma uymaz.
+Uygulama:
+      * İncelenen coinin son 1000 işleminin hacimlerini çekin.
+      * Her işlemin ilk basamağını (leading digit) çıkarın.
+      * Bu dağılımı, Benford referans dağılımı ile karşılaştırın (Chi-Square testi).
+      * Sonuç: Eğer sapma (divergence) çok yüksekse, o coindeki hacim "organik" değildir. Bu, teknik analizin ve OBI gibi göstergelerin o coinde çalışmayacağı anlamına gelir. Aracınız, Benford uyumsuzluğu olan coinleri otomatik olarak "Riskli/Manipülatif" olarak etiketlemelidir.19
+7.4 Altyapı Mimarisi: Docker ve Mikroservis Yaklaşımı
+"Çok iyi tools" yapmak, modüler ve ölçeklenebilir bir mimari gerektirir. Tek bir devasa script yerine, Docker konteynerleri içinde çalışan mikroservisler kurmalısınız.
+Önerilen Mimari Şeması:
+      1. Collector Service (Rust):
+      * Görevi: Borsalara WebSocket ile bağlanır (Binance, Coinbase, Bybit).
+      * Özellik: Bağlantı koptuğunda otomatik tekrar bağlanır (Auto-reconnect). Veriyi normalize eder (farklı borsaların verisini standart formata çevirir).
+      * Çıktı: Veriyi Redis Pub/Sub kanalına ve QuestDB'ye basar.23
+      2. Analysis Engine (Python):
+      * Görevi: Redis'ten canlı veriyi okur.
+      * İşlem: CVD, OBI, Heatmap hesaplamalarını yapar. Yapay zeka modellerini (Sentiment Analysis) çalıştırır.
+      * Çıktı: İşlenmiş sinyalleri (Örn: "BTCUSDT OBI > 0.5") Redis'e geri yazar.
+      3. Execution Service (Rust/Go):
+      * Görevi: Redis'teki sinyalleri dinler.
+      * İşlem: Risk yönetimi kurallarını (Max Drawdown, Pozisyon Büyüklüğü) uygular. Borsaya API üzerinden emri iletir.
+      * Hız: Bu servisin borsaya "co-located" (aynı veri merkezinde) olması kritik avantaj sağlar.
+      4. Dashboard (React/Streamlit):
+      * Görevi: Kullanıcının her şeyi gördüğü arayüz.
+      * Özellik: QuestDB'den tarihsel veriyi, Redis'ten canlı veriyi çeker. Sesli uyarılar (Sonifikasyon) burada çalışır.
+7.5 Arbitraj ve MEV İçin İleri Düzey Teknikler
+Kullanıcının "neler yapılabilir" sorusuna en uç örnekler MEV (Miner Extractable Value) dünyasından gelir.
+      * Atomic Arbitraj: Tek bir işlem (transaction) içinde, borç al (Flash Loan), al-sat yap, borcu öde ve kârı cüzdana çek. Akıllı kontrat (Solidity) bilgisi gerektirir. İşlem başarısız olursa (kâr yoksa), tüm işlem geri alınır (revert), sadece gas ücreti ödenir. Risksiz kârın en saf halidir.32
+      * Jito (Solana) & Flashbots (Ethereum): Bu araçlar, işleminizi doğrudan "blok oluşturuculara" (Block Builders) iletir. Bu sayede işleminiz halka açık mempool'da görünmez, böylece başkaları sizin stratejinizi kopyalayamaz veya önünüze geçemez. Aracınızın bu özel RPC uç noktalarını (endpoints) kullanması, sizi "karanlık ormanda" (Dark Forest) görünmez kılar.33
+Sonuç: Kendi "Terminalinizi" Yaratmak
+Bu raporda sunulan vizyon, piyasada hazır satılan botların çok ötesindedir. Önerilen sistem, bir **"Bloomberg Terminali"**nin kripto ve HFT (Yüksek Frekanslı Ticaret) için özelleştirilmiş, kişisel bir versiyonudur.
+İçgüdüsel ticaret, piyasa ile "dans etmek" gibidir; ancak veri güdümlü ticaret, piyasayı "yönetmek"tir. Önerilen QuestDB + Rust + Python mimarisi, size piyasanın röntgenini (X-Ray) çekme imkanı verecektir. Emir defterinin derinliklerindeki dengesizlikleri, likidasyonların yarattığı manyetik alanları ve hacimlerin arkasındaki gerçek niyeti (CVD) görerek işlem yapmak, şansı denklemden çıkarıp yerini olasılık matematiğine bırakacaktır.
+Bu yolculukta başarı, kodun kalitesi kadar, veriyi yorumlama yeteneğinize de bağlı olacaktır. Ancak doğru parametrelerle (OBI, CVD, Likidasyon) donatılmış bir araç, size piyasa katılımcılarının %99'una karşı haksız bir avantaj (Unfair Advantage) sağlayacaktır.
+Alıntılanan çalışmalar
+      1. Comparing Bookmap to Footprint and Volume Profile Trading Charts and DOM, erişim tarihi Ocak 8, 2026, https://bookmap.com/blog/comparing-bookmap-to-dom-footprint-and-volume-profile
+      2. How Cumulative Volume Delta Can Transform Your Trading Strategy | CVD Trading Explained - Bookmap, erişim tarihi Ocak 8, 2026, https://bookmap.com/blog/how-cumulative-volume-delta-transform-your-trading-strategy
+      3. Cumulativevolumedelta — Indicateurs et Stratégies - TradingView, erişim tarihi Ocak 8, 2026, https://fr.tradingview.com/scripts/cumulativevolumedelta/
+      4. Order Flow Imbalance - A High Frequency Trading Signal | Dean Markwick, erişim tarihi Ocak 8, 2026, https://dm13450.github.io/2022/02/02/Order-Flow-Imbalance.html
+      5. Calculate and Visualize Orderbook Imbalance for BTCUSDT perp - GitHub Gist, erişim tarihi Ocak 8, 2026, https://gist.github.com/aoki-h-jp/d075341220450e797a4c1047a880d6ee
+      6. Price Impact of Order Book Imbalance in Cryptocurrency Markets | Towards Data Science, erişim tarihi Ocak 8, 2026, https://towardsdatascience.com/price-impact-of-order-book-imbalance-in-cryptocurrency-markets-bf39695246f6/
+      7. Order Book Imbalance Analysis with QuestDB Arrays, erişim tarihi Ocak 8, 2026, https://questdb.com/blog/order-book-imbalance-analysis/
+      8. Bitcoin Liquidation Heatmap and How to Use It for Trading - Quadcode, erişim tarihi Ocak 8, 2026, https://quadcode.com/blog/bitcoin-liquidation-heatmap-and-how-to-use-it-for-profitable-trading
+      9. What is Open Interest (OI) in crypto trading? - Coinbase, erişim tarihi Ocak 8, 2026, https://www.coinbase.com/learn/advanced-trading/what-is-open-interest-in-crypto-trading
+      10. Crypto Funding Rate, Bitcoin Funding Rate Compare, Binance ..., erişim tarihi Ocak 8, 2026, https://www.coinglass.com/FundingRate
+      11. Best Platforms for DOM Trading: NinjaTrader, Bookmap, Quantower & More - QuantVPS, erişim tarihi Ocak 8, 2026, https://www.quantvps.com/blog/dom-trading-ninjatrader-bookmap-quantower
+      12. Tucsky/aggr: Cryptocurrency trades aggregator - GitHub, erişim tarihi Ocak 8, 2026, https://github.com/Tucsky/aggr
+      13. Aggr.trade, erişim tarihi Ocak 8, 2026, https://aggr.trade/clarifycrypto-order-flow
+      14. Exocharts | Home, erişim tarihi Ocak 8, 2026, https://exocharts.com/
+      15. TRDR, erişim tarihi Ocak 8, 2026, https://trdr.io/
+      16. Building a Live Crypto-Sentiment Analyzer with RisingWave and Python UDFs, erişim tarihi Ocak 8, 2026, https://levelup.gitconnected.com/building-a-live-crypto-sentiment-analyzer-with-risingwave-and-python-udfs-95e5c8000ff8
+      17. LunarCrush: Your AI Co-Pilot for Crypto Intelligence - Skywork.ai, erişim tarihi Ocak 8, 2026, https://skywork.ai/skypage/en/LunarCrush:-Your-AI-Co-Pilot-for-Crypto-Intelligence/1976162034304872448
+      18. MEV Ethereum - True Position Tools, erişim tarihi Ocak 8, 2026, https://truepositiontools.com/crypto/mev-ethereum-guide
+      19. Crypto Wash Trading* - Cowles Foundation for Research in Economics, erişim tarihi Ocak 8, 2026, https://cowles.yale.edu/sites/default/files/2022-11/cryptowashtrading040521-crypto-wash-trading.pdf
+      20. Application of Benford's Law on Cryptocurrencies - MDPI, erişim tarihi Ocak 8, 2026, https://www.mdpi.com/0718-1876/17/1/16
+      21. Ultimate Guide to Building a Crypto Arbitrage Bot in 2024, erişim tarihi Ocak 8, 2026, https://www.rapidinnovation.io/post/how-to-build-a-crypto-arbitrage-trading-bot
+      22. Web3.py Tutorial Python - Web3 Jobs, erişim tarihi Ocak 8, 2026, https://web3.career/learn-web3/web3-tutorial-python
+      23. Low-Latency Centralized Cryptocurreny Exchange, built in Rust - GitHub, erişim tarihi Ocak 8, 2026, https://github.com/jogeshwar01/exchange
+      24. How I've built an unprofitable Crypto MEV Bot in Rust - Paweł Urbanek, erişim tarihi Ocak 8, 2026, https://pawelurbanek.com/rust-mev-bot
+      25. TimescaleDB vs. QuestDB: Performance benchmarks and overview, erişim tarihi Ocak 8, 2026, https://questdb.com/blog/timescaledb-vs-questdb-comparison/
+      26. ClickHouse® vs TimescaleDB: Best for real-time analytics 2025 - Tinybird, erişim tarihi Ocak 8, 2026, https://www.tinybird.co/blog/clickhouse-vs-timescaledb
+      27. Ultimate Guide to Trading Sniper Bots 2025 | Build, Optimize, and Scale - Rapid Innovation, erişim tarihi Ocak 8, 2026, https://www.rapidinnovation.io/post/how-to-craft-a-sniper-bot-for-automated-trading
+      28. How to Build a Triangular Arbitrage Bot for Crypto Markets - SCAND, erişim tarihi Ocak 8, 2026, https://scand.com/company/blog/how-to-build-a-triangular-arbitrage-bot-for-crypto-markets/
+      29. I created an open-source cryptocurrency arbitrage detection library in Python which offers several customizable algorithms to survey over 90 cryptocurrency exchanges in 34 countries. Would love if anyone would use it or could offer advice for improvement. : r/algotrading - Reddit, erişim tarihi Ocak 8, 2026, https://www.reddit.com/r/algotrading/comments/8578th/i_created_an_opensource_cryptocurrency_arbitrage/
+      30. How to Access Ethereum Mempool | Quicknode Guides, erişim tarihi Ocak 8, 2026, https://www.quicknode.com/guides/ethereum-development/transactions/how-to-access-ethereum-mempool
+      31. A sophisticated Maximal Extractable Value (MEV) bot designed for the Binance Smart Chain (BSC) and Ethereum (ETH) networks. - GitHub, erişim tarihi Ocak 8, 2026, https://github.com/marksantiago290/Ethereum-MEV-BOT
+      32. Ape Framework by Apeworx - Quicknode, erişim tarihi Ocak 8, 2026, https://www.quicknode.com/builders-guide/tools/ape-framework-by-apeworx
+      33. How to Build a Solana Sniper Bot, and Why 90% Fail — the Infra Hack That Wins - Medium, erişim tarihi Ocak 8, 2026, https://medium.com/@yavorovych/how-to-build-a-solana-sniper-bot-and-why-90-fail-the-infra-hack-that-wins-0cbfbbf76a8d
+      34. MEV Bot Guide: Create an Ethereum Arbitrage Trading Bot - Blocknative, erişim tarihi Ocak 8, 2026, https://www.blocknative.com/blog/mev-and-creating-a-basic-arbitrage-bot-on-ethereum-mainnet

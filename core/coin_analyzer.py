@@ -262,8 +262,8 @@ class CoinAnalyzer:
                     analysis.top_asks.append(DepthLevel(price, qty, price * qty))
                 
                 # Toplam hacim
-                bid_total = sum(b[1] for b in bids[:10])
-                ask_total = sum(a[1] for a in asks[:10])
+                bid_total = sum(float(b[1]) for b in bids[:10])
+                ask_total = sum(float(a[1]) for a in asks[:10])
                 total = bid_total + ask_total
                 
                 if total > 0:
