@@ -88,14 +88,16 @@ class Backtester:
         self.SL_PERCENT = 0.003  # %0.3 Stop Loss
         self.MIN_PROFIT_THRESHOLD = 0.002  # %0.2 - komisyon ustunde kar
         
-        # Mevcut ağırlıklar (varsayılan)
+        # Backtest agirliklari - GERCEK VERIYE DAYALI
+        # NOT: OBI (Order Book Imbalance) backtest'te KULLANILAMAZ
+        # cunku gecmis order book verisi yok. RSI'dan OBI turetmek yaniltici.
         self.weights = {
-            "volume": 15,
-            "momentum": 15,
-            "obi": 10,
-            "market": 25,
-            "multi_tf": 20,
-            "btc_lag": 15
+            "volume": 25,      # Hacim analizi - GERCEK
+            "momentum": 25,    # Fiyat momentumu - GERCEK
+            "rsi": 20,         # RSI indikatoru - GERCEK
+            "ema_trend": 20,   # EMA trendi - GERCEK
+            "stoch": 10        # Stochastic - GERCEK
+            # OBI, market, btc_lag CIKARILDI - backtest'te gercek verisi yok
         }
         
         # Deep Learning predictor
@@ -395,11 +397,13 @@ class Backtester:
             scores['momentum'] = 0
         scores['momentum_direction'] = 1 if momentum > 0 else (-1 if momentum < 0 else 0)
         
-        # Eski skorlar (uyumluluk icin)
-        scores['obi'] = scores['rsi'] * 0.5
-        scores['market'] = 50
+        # NOT: OBI (Order Book Imbalance) backtest'te KULLANILMIYOR
+        # Gercek OBI icin canli order book verisi gerekli
+        # RSI'dan OBI turetmek YANILTICI oldugu icin kaldirildi
+        scores['obi'] = 0  # Backtest'te yok
+        scores['market'] = 0  # Canli veri gerekli
         scores['multi_tf'] = scores['ema_trend']
-        scores['btc_lag'] = 0
+        scores['btc_lag'] = 0  # Canli veri gerekli
         
         return scores
     
