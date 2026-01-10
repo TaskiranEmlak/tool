@@ -64,23 +64,39 @@ class Predictor:
     Tahmin Motoru.
     
     Birden fazla sinyali birleştirerek gelecek hareketi tahmin eder.
+    20 dakika içindeki fiyat hareketini öngörür.
+    
+    Özellikler:
+    - Rule-based + ML hibrit sistem
+    - Backtest'ten optimize edilmiş ağırlıklar
+    - LightGBM entegrasyonu
     """
     
-    def __init__(self):
+    def __init__(self, use_ml: bool = True):
         self.base_url = "https://fapi.binance.com"
         
         # Market Data fetcher
         self.market_data = MarketDataFetcher()
         
-        # Ağırlıklar (toplam 100)
-        self.weights = {
-            "volume": 15,
-            "momentum": 15,
-            "obi": 10,
-            "market": 25,      # Funding + OI + L/S
-            "multi_tf": 20,    # 5m + 1m uyumu - YENİ
-            "btc_lag": 15
-        }
+        # Backtest optimize ağırlıkları yükle (varsa)
+        self.weights = self._load_optimized_weights()
+        
+        # ML predictor (opsiyonel)
+        self.use_ml = use_ml
+        self.ml_predictor = None
+        self.ml_weight = 0.4  # ML'in toplam skora etkisi
+        
+        if use_ml:
+            try:
+                from core.ai_predictor import LightGBMPredictor
+                self.ml_predictor = LightGBMPredictor()
+                if self.ml_predictor.is_trained:
+                    print(f"[Predictor] LightGBM aktif (v{self.ml_predictor.model_version})")
+                else:
+                    print("[Predictor] LightGBM model eğitilmemiş, rule-based kullanılacak")
+            except Exception as e:
+                print(f"[Predictor] ML yüklenemedi: {e}")
+                self.ml_predictor = None
         
         # BTC takibi
         self.btc_price_history: deque = deque(maxlen=30)  # Son 30 fiyat
@@ -94,6 +110,37 @@ class Predictor:
         
         # Tahmin sonuçları
         self._predictions: Dict[str, CoinPrediction] = {}
+    
+    def _load_optimized_weights(self) -> Dict[str, float]:
+        """
+        Backtest'ten optimize edilmiş ağırlıkları yükle.
+        Yoksa varsayılan ağırlıkları kullan.
+        """
+        import json
+        import os
+        
+        weights_path = "data/backtest/optimized_weights.json"
+        
+        default_weights = {
+            "volume": 15,
+            "momentum": 15,
+            "obi": 10,
+            "market": 25,      # Funding + OI + L/S
+            "multi_tf": 20,    # 5m + 1m uyumu
+            "btc_lag": 15
+        }
+        
+        if os.path.exists(weights_path):
+            try:
+                with open(weights_path, 'r') as f:
+                    loaded_weights = json.load(f)
+                print(f"[Predictor] Optimize ağırlıklar yüklendi: {weights_path}")
+                return loaded_weights
+            except Exception as e:
+                print(f"[Predictor] Ağırlık yükleme hatası: {e}")
+        
+        print("[Predictor] Varsayılan ağırlıklar kullanılıyor")
+        return default_weights
     
     async def analyze(self, symbol: str, current_price: float, 
                       bids: List[Tuple[float, float]], 
@@ -155,8 +202,8 @@ class Predictor:
         if btc_reason:
             prediction.reasons.append(btc_reason)
         
-        # 7. Toplam skor hesapla
-        prediction.total_score = (
+        # 7. Rule-based toplam skor hesapla
+        rule_score = (
             prediction.volume_score * self.weights["volume"] / 100 +
             prediction.momentum_score * self.weights["momentum"] / 100 +
             prediction.obi_score * self.weights["obi"] / 100 +
@@ -165,7 +212,60 @@ class Predictor:
             prediction.btc_lag_score * self.weights["btc_lag"] / 100
         )
         
-        # Confidence ve tahmini hareket
+        # 8. ML Hibrit Tahmin (LightGBM varsa)
+        ml_score = 0
+        ml_direction = None
+        
+        if self.ml_predictor and self.ml_predictor.is_trained:
+            try:
+                # ML için feature'ları hazırla
+                ml_features = {
+                    'obi': prediction.obi_score / 100,
+                    'volume_ratio': prediction.volume_score / 50 if prediction.volume_score > 0 else 1.0,
+                    'momentum_score': prediction.momentum_score,
+                    'funding_rate': prediction.funding_rate,
+                    'long_percent': 50 + (prediction.long_short_ratio - 1) * 20,
+                    'oi_change_5m': prediction.oi_change,
+                    'tf_5m': 1 if prediction.tf_5m_trend == "up" else (-1 if prediction.tf_5m_trend == "down" else 0),
+                    'tf_1m': 1 if prediction.tf_1m_trend == "up" else (-1 if prediction.tf_1m_trend == "down" else 0),
+                    'btc_lag': prediction.btc_lag_score / 100,
+                    'hour_of_day': datetime.now().hour
+                }
+                
+                ml_prediction = self.ml_predictor.predict(ml_features, symbol)
+                
+                # ML skoru (predicted_change'i 0-100'e çevir)
+                ml_score = 50 + ml_prediction.predicted_change * 10
+                ml_score = max(0, min(100, ml_score))
+                
+                ml_direction = ml_prediction.direction
+                
+                if ml_prediction.confidence > 0.5:
+                    prediction.reasons.append(
+                        f"🤖 ML: {ml_prediction.predicted_change:+.2f}% "
+                        f"({ml_direction}, güven: {ml_prediction.confidence:.0%})"
+                    )
+            except Exception as e:
+                pass  # ML hatası durumunda rule-based devam et
+        
+        # 9. Final Skor (Hibrit)
+        if self.ml_predictor and self.ml_predictor.is_trained and ml_score > 0:
+            # 60% Rule-based + 40% ML
+            prediction.total_score = (
+                rule_score * (1 - self.ml_weight) + 
+                ml_score * self.ml_weight
+            )
+            
+            # Yön uyumu bonus/penaltı
+            if ml_direction and prediction.predicted_direction:
+                if ml_direction == prediction.predicted_direction:
+                    prediction.total_score *= 1.1  # +10% bonus
+                else:
+                    prediction.total_score *= 0.9  # -10% penaltı
+        else:
+            prediction.total_score = rule_score
+        
+        # Confidence ve tahmini hareket (20 dakika için kalibre)
         prediction.confidence = min(prediction.total_score / 80, 1.0)
         
         if prediction.total_score >= 60:
