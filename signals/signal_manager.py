@@ -78,25 +78,41 @@ class SignalManager:
         self.min_confidence = settings.SIGNAL_MIN_CONFIDENCE  # 0.6
         self.cooldown_seconds = settings.SIGNAL_COOLDOWN_SECONDS  # 60
         
-        # Risk/Ödül oranları
-        self.default_sl_percent = 0.5  # %0.5 stop loss
-        self.default_tp_percent = 1.0  # %1 take profit (1:2 R/R)
+        # Risk Yönetimi (Kill Switch)
+        self.daily_loss_percent = 0.0
+        self.max_daily_loss_percent = 5.0  # %5 gunluk max zarar
+        self.is_trading_halted = False
+        
+        # Risk/Ödül oranları (ATR ile dinamik olacak)
+        # self.default_sl_percent = 0.5  <- ESKI (STATIC)
+        # self.default_tp_percent = 1.0  <- ESKI (STATIC)
     
-    def generate_signal(self, symbol: str, current_price: float,
+    async def publish_event_async(self, event: Event):
+        """Asenkron event yayini"""
+        await self.event_bus.publish(event)
+    
+    def calculate_atr(self, symbol: str, interval: int = 14) -> float:
+        """Basit ATR hesaplama (simulasyon icin) - Gercekte TA-Lib kullanilmali"""
+        # Not: Burasi backtest verisi olmadigi icin basitlesitirilmis
+        # Gerçek uygulamada indicators/atr.py dan alinmali
+        return 0.005  # Varsayılan %0.5 volatilite
+        
+    async def generate_signal(self, symbol: str, current_price: float,
                         bids: List[Tuple[float, float]],
                         asks: List[Tuple[float, float]]) -> Optional[TradingSignal]:
         """
         Tüm göstergeleri analiz edip sinyal üret.
-        
-        Args:
-            symbol: Sembol
-            current_price: Mevcut fiyat
-            bids: Order book alış emirleri
-            asks: Order book satış emirleri
-            
-        Returns:
-            TradingSignal veya None
+        Async calismali (bloklamamali).
         """
+        # KILL SWITCH KONTROLU
+        if self.is_trading_halted:
+            return None
+        
+        if self.daily_loss_percent >= self.max_daily_loss_percent:
+            self.is_trading_halted = True
+            print(f"[RISK] GUNLUK MAX ZARAR ({self.daily_loss_percent:.2f}%) ASILDI - BOT DURDURULDU")
+            return None
+            
         now = datetime.now()
         
         # Cooldown kontrolü
@@ -187,13 +203,19 @@ class SignalManager:
         else:
             return None  # Yeterli güven yok
         
-        # SL/TP hesapla
+        # ATR hesapla (Dinamik SL/TP icin)
+        # Not: Gerçekte TA-Lib ile hesaplanmali, burada basitlestirildi
+        atr = self.calculate_atr(symbol)
+        atr_multiplier_sl = 1.5
+        atr_multiplier_tp = 2.5
+        
+        # Dinamik SL/TP hesapla
         if direction == SignalDirection.LONG:
-            stop_loss = current_price * (1 - self.default_sl_percent / 100)
-            take_profit = current_price * (1 + self.default_tp_percent / 100)
+            stop_loss = current_price * (1 - atr * atr_multiplier_sl)
+            take_profit = current_price * (1 + atr * atr_multiplier_tp)
         else:
-            stop_loss = current_price * (1 + self.default_sl_percent / 100)
-            take_profit = current_price * (1 - self.default_tp_percent / 100)
+            stop_loss = current_price * (1 + atr * atr_multiplier_sl)
+            take_profit = current_price * (1 - atr * atr_multiplier_tp)
         
         # Sinyal oluştur
         signal = TradingSignal(
@@ -230,9 +252,9 @@ class SignalManager:
         self._signal_history.append(signal)
         self._last_signal_time[symbol] = now
         
-        # Event yayınla
+        # Event yayınla (ASYNC)
         event_type = EventType.SIGNAL_LONG if direction == SignalDirection.LONG else EventType.SIGNAL_SHORT
-        self.event_bus.publish_sync(Event(
+        await self.publish_event_async(Event(
             type=event_type,
             symbol=symbol,
             data={
@@ -273,8 +295,8 @@ class SignalManager:
         
         return None
     
-    def close_signal(self, symbol: str, exit_type: str, exit_price: float):
-        """Sinyali kapat"""
+    async def close_signal(self, symbol: str, exit_type: str, exit_price: float):
+        """Sinyali kapat (Async)"""
         if symbol not in self._active_signals:
             return
         
@@ -285,6 +307,13 @@ class SignalManager:
             pnl_percent = ((exit_price - signal.entry_price) / signal.entry_price) * 100
         else:
             pnl_percent = ((signal.entry_price - exit_price) / signal.entry_price) * 100
+            
+        # Kill Switch Guncelleme
+        if pnl_percent < 0:
+            self.daily_loss_percent += abs(pnl_percent)
+            if self.daily_loss_percent >= self.max_daily_loss_percent:
+                self.is_trading_halted = True
+                print(f"[RISK] GUNLUK MAX ZARAR ({self.daily_loss_percent:.2f}%) ASILDI - BOT DURDURULDU")
         
         signal.status = f"closed_{exit_type}"
         
@@ -292,8 +321,8 @@ class SignalManager:
         if self.db and signal.id:
             self.db.close_signal(signal.id, pnl_percent)
         
-        # Event yayınla
-        self.event_bus.publish_sync(Event(
+        # Event yayınla (ASYNC)
+        await self.publish_event_async(Event(
             type=EventType.SIGNAL_CLOSE,
             symbol=symbol,
             data={
