@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.scanner import VolatilityScanner
 from core.predictor import Predictor, CoinPrediction
 from core.coin_analyzer import CoinAnalyzer, CoinAnalysis
+from core.database import Database
+from indicators.benford import WashTradingFilter
 from tools.helpers import VoiceAlert, CorrelationTracker, MarketRegimeDetector, RiskCalculator
 
 # Tema ayarları
@@ -42,14 +44,20 @@ class UltimateDashboard(ctk.CTk):
         self.geometry("1400x900")
         self.minsize(1200, 700)
         
-        # Bileşenler
+        # Bilesenler
         self.scanner = VolatilityScanner()
         self.predictor = Predictor()
         self.analyzer = CoinAnalyzer()
+        self.db = Database()  # Kalici hafiza
+        self.wash_filter = WashTradingFilter()  # Sahte hacim filtresi
         self.voice = VoiceAlert(enabled=True)
         self.correlation = CorrelationTracker()
         self.regime_detector = MarketRegimeDetector()
         self.risk_calc = RiskCalculator(account_size=1000)
+        
+        # Sinyal sayaci
+        self.signal_count = 0
+        self.win_count = 0
         
         # Durum
         self.running = False
@@ -288,8 +296,19 @@ class UltimateDashboard(ctk.CTk):
     # ===========================
     
     def _initial_load(self):
-        """Başlangıç verilerini yükle"""
+        """Başlangıç verilerini yükle ve geçmiş performansı göster"""
         self._update_regime()
+        
+        # Veritabanından geçmiş performans
+        try:
+            stats = self.db.get_stats()
+            if stats.get('signals', 0) > 0:
+                win_rate = stats.get('signals', 0)
+                self.info_label.configure(
+                    text=f"DB: {stats.get('signals', 0)} sinyal | Scalping Dashboard v2.0"
+                )
+        except Exception as e:
+            print(f"[Dashboard] DB yükleme hatası: {e}")
     
     def _toggle_voice(self):
         """Sesli uyarı toggle"""
@@ -535,19 +554,33 @@ class UltimateDashboard(ctk.CTk):
                 await asyncio.sleep(5)
     
     def _update_radar(self, predictions):
-        """Radar güncelle"""
+        """Radar guncelle - Benford filtresi ile"""
         for item in self.radar_tree.get_children():
             self.radar_tree.delete(item)
         
         for coin, pred in predictions:
-            tag = "hot" if pred.total_score >= 55 else "normal"
+            # Benford wash trading kontrolu
+            self.wash_filter.add_volume(coin.symbol, coin.volume if hasattr(coin, 'volume') else 1000000)
+            is_suspicious = self.wash_filter.is_suspicious(coin.symbol)
+            
+            # Icon ve tag belirleme
+            warning = "⚠️" if is_suspicious else ""
+            
+            if pred.total_score >= 55:
+                tag = "hot"
+            elif is_suspicious:
+                tag = "suspicious"
+            else:
+                tag = "normal"
+            
             self.radar_tree.insert("", "end", values=(
-                coin.symbol,
+                f"{warning}{coin.symbol}",
                 f"{coin.price_change_percent:+.2f}%",
                 f"{pred.total_score:.0f}"
             ), tags=(tag,))
         
-        self.radar_tree.tag_configure("hot", foreground="#f0883e")
+        self.radar_tree.tag_configure("hot", foreground="#f0883e")  # Turuncu - guclue sinyal
+        self.radar_tree.tag_configure("suspicious", foreground="#f85149")  # Kirmizi - wash trading
         self.radar_count.configure(text=f"{len(predictions)} coin")
     
     def _update_correlation(self, corr: float, comment: str):
@@ -565,12 +598,31 @@ class UltimateDashboard(ctk.CTk):
             self.corr_value.configure(text_color="#f85149")  # Kırmızı - BTC bağımlı
     
     def _add_signal(self, symbol: str, pred: CoinPrediction):
-        """Sinyal ekle"""
+        """Sinyal ekle ve veritabanına kaydet"""
         direction = "LONG" if pred.predicted_direction == "up" else "SHORT"
         icon = "🟢" if direction == "LONG" else "🔴"
         
-        text = f"{icon} {direction} {symbol} | Skor: {pred.total_score:.0f}\n"
+        # Veritabanına kaydet
+        try:
+            entry_price = pred.current_price
+            stop_loss = entry_price * (0.99 if direction == "LONG" else 1.01)
+            take_profit = entry_price * (1.015 if direction == "LONG" else 0.985)
+            
+            signal_id = self.db.insert_signal(
+                symbol=symbol,
+                direction=pred.predicted_direction,
+                confidence=pred.confidence,
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                reason="; ".join(pred.reasons[:3]) if pred.reasons else "Teknik sinyal",
+                timestamp=datetime.now()
+            )
+            self.signal_count += 1
+        except Exception as e:
+            print(f"[Dashboard] Sinyal kayıt hatası: {e}")
         
+        text = f"{icon} {direction} {symbol} | Skor: {pred.total_score:.0f}\n"
         self.signal_text.insert("0.0", text)
         
         # Sesli uyarı
