@@ -70,15 +70,17 @@ class BacktestMetrics:
 class Backtester:
     """
     Historical data ile tahmin performansı testi.
+    Deep Learning (LSTM) + Rule-based ensemble sistem.
     
     Kullanım:
-        bt = Backtester(days=7)
+        bt = Backtester(days=7, use_deep_learning=True)
         results = await bt.run(['BTCUSDT', 'ETHUSDT'])
     """
     
-    def __init__(self, days: int = 7):
+    def __init__(self, days: int = 7, use_deep_learning: bool = True):
         self.base_url = "https://fapi.binance.com"
         self.days = days
+        self.use_deep_learning = use_deep_learning
         
         # Mevcut ağırlıklar (varsayılan)
         self.weights = {
@@ -88,6 +90,25 @@ class Backtester:
             "market": 25,
             "multi_tf": 20,
             "btc_lag": 15
+        }
+        
+        # Deep Learning predictor
+        self.deep_predictor = None
+        if use_deep_learning:
+            try:
+                from core.deep_learning_predictor import LSTMPredictor
+                self.deep_predictor = LSTMPredictor()
+                if self.deep_predictor.is_trained:
+                    print("[Backtest] Deep Learning (LSTM) modeli yüklendi")
+                else:
+                    print("[Backtest] LSTM modeli henüz eğitilmemiş - kural tabanlı sistem kullanılacak")
+            except Exception as e:
+                print(f"[Backtest] Deep Learning yüklenemedi: {e}")
+        
+        # Ensemble ağırlıkları
+        self.ensemble_weights = {
+            "rule_based": 0.35,  # Teknik indikatörler
+            "deep_learning": 0.65  # LSTM tahminleri
         }
         
         # Sonuçlar
@@ -158,25 +179,58 @@ class Backtester:
             'taker_buy_quote', 'ignore'
         ])
         
-        # Tip dönüşümleri
+        # Tip donusumleri
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = df[col].astype(float)
         
-        # Ekstra özellikler hesapla
+        # Ekstra ozellikler hesapla
         df['returns'] = df['close'].pct_change() * 100
         df['volume_sma'] = df['volume'].rolling(12).mean()  # 1 saat ortalama
         df['volume_ratio'] = df['volume'] / df['volume_sma']
         
-        # Momentum (son 4 mumun toplam değişimi)
+        # Momentum (son 4 mumun toplam degisimi)
         df['momentum'] = df['returns'].rolling(4).sum()
         
-        # 20 dakika sonraki fiyat (4 mum sonrası)
+        # === YENI INDIKATORLER ===
+        
+        # RSI (14 period)
+        delta = df['close'].diff()
+        gain = delta.where(delta > 0, 0).rolling(14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        df['rsi'] = 100 - (100 / (1 + gain / loss.replace(0, 0.0001)))
+        
+        # MACD (12, 26, 9)
+        df['ema12'] = df['close'].ewm(span=12, adjust=False).mean()
+        df['ema26'] = df['close'].ewm(span=26, adjust=False).mean()
+        df['macd'] = df['ema12'] - df['ema26']
+        df['macd_signal'] = df['macd'].ewm(span=9, adjust=False).mean()
+        df['macd_hist'] = df['macd'] - df['macd_signal']
+        
+        # Stochastic (14 period)
+        low_14 = df['low'].rolling(14).min()
+        high_14 = df['high'].rolling(14).max()
+        df['stoch_k'] = ((df['close'] - low_14) / (high_14 - low_14).replace(0, 0.0001)) * 100
+        df['stoch_d'] = df['stoch_k'].rolling(3).mean()
+        
+        # Bollinger Bands (20, 2)
+        df['bb_mid'] = df['close'].rolling(20).mean()
+        df['bb_std'] = df['close'].rolling(20).std()
+        df['bb_upper'] = df['bb_mid'] + (df['bb_std'] * 2)
+        df['bb_lower'] = df['bb_mid'] - (df['bb_std'] * 2)
+        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower']).replace(0, 0.0001)
+        
+        # EMA Trend (9, 21)
+        df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
+        df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
+        df['ema_trend'] = np.where(df['ema9'] > df['ema21'], 1, -1)
+        
+        # 20 dakika sonraki fiyat (4 mum sonrasi)
         df['price_20m'] = df['close'].shift(-4)
         df['change_20m'] = ((df['price_20m'] - df['close']) / df['close']) * 100
         
         self._data_cache[cache_key] = df
-        print(f"[Backtest] {symbol}: {len(df)} mum yüklendi")
+        print(f"[Backtest] {symbol}: {len(df)} mum yuklendi (RSI/MACD/STOCH aktif)")
         
         return df
     
@@ -215,14 +269,15 @@ class Backtester:
     
     def calculate_signal_scores(self, row: pd.Series, df: pd.DataFrame, idx: int) -> Dict:
         """
-        Tek bir zaman noktasında sinyal skorlarını hesapla.
-        
-        Mevcut predictor.py mantığını simüle eder.
+        Tek bir zaman noktasinda sinyal skorlarini hesapla.
+        RSI, MACD, Stochastic ile gelistirilmis versiyon.
         """
         scores = {}
         
         # 1. Volume Score (0-100)
         volume_ratio = row.get('volume_ratio', 1.0)
+        if pd.isna(volume_ratio):
+            volume_ratio = 1.0
         if volume_ratio >= 3.0:
             scores['volume'] = 100
         elif volume_ratio >= 2.0:
@@ -234,82 +289,214 @@ class Backtester:
         else:
             scores['volume'] = 0
         
-        # 2. Momentum Score (0-100)
+        # 2. RSI Score (0-100) - Oversold/Overbought sinyalleri
+        # DAHA SECICI ESIKLER
+        rsi = row.get('rsi', 50)
+        if pd.isna(rsi):
+            rsi = 50
+        
+        if rsi < 25:
+            scores['rsi'] = 100  # Cok oversold - guclu LONG
+            scores['rsi_direction'] = 2  # Cift agirlik
+        elif rsi < 35:
+            scores['rsi'] = 70   # Oversold - LONG firsati
+            scores['rsi_direction'] = 1
+        elif rsi > 75:
+            scores['rsi'] = 100  # Cok overbought - guclu SHORT
+            scores['rsi_direction'] = -2
+        elif rsi > 65:
+            scores['rsi'] = 70   # Overbought - SHORT firsati
+            scores['rsi_direction'] = -1
+        else:
+            scores['rsi'] = 10   # Notr bolge - sinyal yok
+            scores['rsi_direction'] = 0
+        
+        # 3. MACD Score (0-100) - Trend momentum
+        macd = row.get('macd', 0)
+        macd_signal = row.get('macd_signal', 0)
+        macd_hist = row.get('macd_hist', 0)
+        
+        if pd.isna(macd) or pd.isna(macd_signal):
+            macd, macd_signal, macd_hist = 0, 0, 0
+        
+        # MACD cross-over kontrolu
+        if idx >= 1:
+            prev_macd = df.iloc[idx-1].get('macd', 0)
+            prev_signal = df.iloc[idx-1].get('macd_signal', 0)
+            
+            # Bullish cross (MACD signal'i yukari kesiyor)
+            if prev_macd <= prev_signal and macd > macd_signal:
+                scores['macd'] = 100
+                scores['macd_direction'] = 1
+            # Bearish cross (MACD signal'i asagi kesiyor)
+            elif prev_macd >= prev_signal and macd < macd_signal:
+                scores['macd'] = 100
+                scores['macd_direction'] = -1
+            elif macd > macd_signal:
+                scores['macd'] = 60
+                scores['macd_direction'] = 1
+            elif macd < macd_signal:
+                scores['macd'] = 60
+                scores['macd_direction'] = -1
+            else:
+                scores['macd'] = 20
+                scores['macd_direction'] = 0
+        else:
+            scores['macd'] = 20
+            scores['macd_direction'] = 0
+        
+        # 4. Stochastic Score (0-100)
+        stoch_k = row.get('stoch_k', 50)
+        stoch_d = row.get('stoch_d', 50)
+        
+        if pd.isna(stoch_k) or pd.isna(stoch_d):
+            stoch_k, stoch_d = 50, 50
+        
+        if stoch_k < 20 and stoch_d < 20:
+            scores['stochastic'] = 100
+            scores['stoch_direction'] = 1  # Oversold
+        elif stoch_k > 80 and stoch_d > 80:
+            scores['stochastic'] = 100
+            scores['stoch_direction'] = -1  # Overbought
+        elif stoch_k < 30:
+            scores['stochastic'] = 60
+            scores['stoch_direction'] = 1
+        elif stoch_k > 70:
+            scores['stochastic'] = 60
+            scores['stoch_direction'] = -1
+        else:
+            scores['stochastic'] = 20
+            scores['stoch_direction'] = 0
+        
+        # 5. EMA Trend (0-100)
+        ema_trend = row.get('ema_trend', 0)
         momentum = row.get('momentum', 0)
-        if momentum > 0.5:
-            scores['momentum'] = min(100, momentum * 50)
-        elif momentum < -0.5:
+        
+        if pd.isna(ema_trend):
+            ema_trend = 0
+        if pd.isna(momentum):
+            momentum = 0
+        
+        scores['ema_trend'] = 80 if ema_trend != 0 else 30
+        scores['ema_direction'] = int(ema_trend) if not pd.isna(ema_trend) else 0
+        
+        # 6. Momentum (eski mantik)
+        if abs(momentum) > 0.5:
             scores['momentum'] = min(100, abs(momentum) * 50)
         else:
             scores['momentum'] = 0
+        scores['momentum_direction'] = 1 if momentum > 0 else (-1 if momentum < 0 else 0)
         
-        # 3. OBI Score (simüle - gerçek order book yok)
-        # Historical'da OBI yok, momentum'dan tahmin et
-        scores['obi'] = scores['momentum'] * 0.7
-        
-        # 4. Market Score (funding varsa)
-        # Simplified - funding yüksekse short baskısı
-        scores['market'] = 50  # Nötr varsayım
-        
-        # 5. Multi-TF Score
-        # Son 3 ve 5 mumun yönüne bak
-        if idx >= 5:
-            last_3 = df.iloc[idx-3:idx]['returns'].sum()
-            last_5 = df.iloc[idx-5:idx]['returns'].sum()
-            
-            if last_3 > 0.2 and last_5 > 0.3:
-                scores['multi_tf'] = 100  # Güçlü uptrend
-            elif last_3 < -0.2 and last_5 < -0.3:
-                scores['multi_tf'] = 100  # Güçlü downtrend
-            elif (last_3 > 0) == (last_5 > 0):
-                scores['multi_tf'] = 50   # Uyumlu ama zayıf
-            else:
-                scores['multi_tf'] = 0    # Çakışma
-        else:
-            scores['multi_tf'] = 0
-        
-        # 6. BTC Lag Score (sadece altcoinler için)
-        scores['btc_lag'] = 0  # Basitlik için
+        # Eski skorlar (uyumluluk icin)
+        scores['obi'] = scores['rsi'] * 0.5
+        scores['market'] = 50
+        scores['multi_tf'] = scores['ema_trend']
+        scores['btc_lag'] = 0
         
         return scores
     
     def calculate_total_score(self, scores: Dict) -> Tuple[float, str, float]:
         """
-        Toplam skor ve tahmin yönü hesapla.
+        Toplam skor ve tahmin yonu hesapla.
+        RSI, MACD, Stochastic ile gelistirilmis yon belirleme.
         
         Returns:
             (total_score, direction, confidence)
         """
-        total = sum(
+        # Toplam skor (eski agirliklar + yeniler)
+        base_score = sum(
             scores.get(key, 0) * weight / 100
             for key, weight in self.weights.items()
         )
         
-        # Yön belirleme
-        momentum = scores.get('momentum', 0)
-        multi_tf = scores.get('multi_tf', 0)
+        # Yeni indikator skorlari (bonus)
+        rsi_score = scores.get('rsi', 0) * 0.15
+        macd_score = scores.get('macd', 0) * 0.15
+        stoch_score = scores.get('stochastic', 0) * 0.10
         
-        # Momentum ve TF'den yön çıkar
-        direction_score = 0
-        if momentum > 30:
-            direction_score += 1
-        elif momentum < -30:
-            direction_score -= 1
+        total = base_score + rsi_score + macd_score + stoch_score
         
-        if multi_tf > 50:
-            # TF yönüne bak (bu basitleştirilmiş)
-            direction_score += 1 if momentum >= 0 else -1
+        # === YON BELIRLEME (SIMETRIK ESIKLER) ===
+        # Her indikatorun yonu
+        rsi_dir = scores.get('rsi_direction', 0)
+        macd_dir = scores.get('macd_direction', 0)
+        stoch_dir = scores.get('stoch_direction', 0)
+        ema_dir = scores.get('ema_direction', 0)
+        mom_dir = scores.get('momentum_direction', 0)
         
-        direction = "up" if direction_score >= 0 else "down"
+        # Agirlikli yon skoru (toplam max: ~7)
+        direction_score = (
+            rsi_dir * 2.0 +      # RSI onemli (-4 to +4)
+            macd_dir * 2.0 +     # MACD onemli (-2 to +2)
+            stoch_dir * 1.5 +    # Stochastic (-1.5 to +1.5)
+            ema_dir * 1.0 +      # EMA trend (-1 to +1)
+            mom_dir * 0.5        # Momentum (-0.5 to +0.5)
+        )
         
-        # Confidence
-        confidence = min(total / 80, 1.0)
+        # === SIMETRIK YON BELIRLEME ===
+        # Ayni esikler - her iki yon icin esit davran
+        # En az 2 indikator uyumlu olmali
         
+        if direction_score >= 1.5:
+            # UP sinyali - pozitif consensus
+            direction = "up"
+        elif direction_score <= -1.5:
+            # DOWN sinyali - negatif consensus
+            direction = "down"
+        elif direction_score > 0.5:
+            # Zayif UP - EMA ve MACD onaylarsa kabul et
+            if ema_dir > 0 and (macd_dir > 0 or rsi_dir > 0):
+                direction = "up"
+            else:
+                direction = "neutral"  # Belirsiz
+        elif direction_score < -0.5:
+            # Zayif DOWN - EMA ve MACD onaylarsa kabul et
+            if ema_dir < 0 and (macd_dir < 0 or rsi_dir < 0):
+                direction = "down"
+            else:
+                direction = "neutral"  # Belirsiz
+        else:
+            direction = "neutral"  # Sinyal yok
+        
+        # Confidence (yon uyumu ne kadar guclu)
+        confidence = min(abs(direction_score) / 7.0, 1.0)
+        
+        # === TREND FILTRESI (DUZELTILMIS) ===
+        # Trend tersine islem icin guclu onay iste
+        if direction == "up" and ema_dir < 0:
+            # Downtrend'de UP sinyali - RSI oversold ve MACD crossover gerekli
+            rsi_val = scores.get('rsi', 50)
+            macd_bullish = macd_dir > 0
+            stoch_oversold = stoch_dir > 0
+            
+            if rsi_val >= 70 and (macd_bullish or stoch_oversold):
+                # Guclu reversal sinyali var - kabul et ama skoru azalt
+                total *= 0.85
+            else:
+                # Zayif sinyal - neutral yap
+                direction = "neutral"
+                confidence *= 0.5
+                
+        elif direction == "down" and ema_dir > 0:
+            # Uptrend'de DOWN sinyali - RSI overbought ve MACD crossover gerekli
+            rsi_val = scores.get('rsi', 50)
+            macd_bearish = macd_dir < 0
+            stoch_overbought = stoch_dir < 0
+            
+            if rsi_val >= 70 and (macd_bearish or stoch_overbought):
+                # Guclu reversal sinyali var - kabul et ama skoru azalt
+                total *= 0.85
+            else:
+                # Zayif sinyal - neutral yap
+                direction = "neutral"
+                confidence *= 0.5
+
         return total, direction, confidence
     
     async def simulate_predictions(self, symbol: str) -> List[BacktestResult]:
         """
         Tüm historical data üzerinde tahmin simülasyonu yap.
+        Deep Learning (LSTM) + Rule-based ensemble kullanır.
         """
         df = await self.fetch_historical_klines(symbol)
         
@@ -318,20 +505,109 @@ class Backtester:
         
         results = []
         
+        # Deep Learning için özellikleri hesapla
+        deep_features_df = None
+        if self.deep_predictor and self.deep_predictor.is_trained:
+            deep_features_df = self.deep_predictor.calculate_features(df.copy())
+        
         # Her 5 dakikada bir sinyal üret (20dk sonrasını tahmin)
-        for idx in range(10, len(df) - 4):  # İlk 10 ve son 4 mumu atla
+        for idx in range(60, len(df) - 4):  # LSTM için 60 mum gerekli
             row = df.iloc[idx]
             
             # 20dk sonraki fiyat yoksa atla
             if pd.isna(row['price_20m']):
                 continue
             
-            # Sinyal skorları hesapla
+            # === KURAL TABANLI SKOR ===
             scores = self.calculate_signal_scores(row, df, idx)
-            total_score, direction, confidence = self.calculate_total_score(scores)
+            rule_score, rule_direction, rule_confidence = self.calculate_total_score(scores)
             
-            # Sinyal esigi (daha fazla veri icin dusuk tutuyoruz)
-            if total_score < 25:
+            # === DEEP LEARNING TAHMİNİ ===
+            dl_direction = "neutral"
+            dl_confidence = 0.33
+            dl_up_prob = 0.33
+            dl_down_prob = 0.33
+            
+            if deep_features_df is not None and self.deep_predictor:
+                try:
+                    # Son 60 mum ile tahmin
+                    df_slice = deep_features_df.iloc[max(0, idx-60):idx+1]
+                    if len(df_slice) >= 60:
+                        dl_pred = self.deep_predictor.predict(df_slice, symbol)
+                        dl_direction = dl_pred.direction
+                        dl_confidence = dl_pred.confidence
+                        dl_up_prob = dl_pred.probabilities.get('up', 0.33)
+                        dl_down_prob = dl_pred.probabilities.get('down', 0.33)
+                        dl_neutral_prob = dl_pred.probabilities.get('neutral', 0.34)
+                except Exception:
+                    pass  # Hata durumunda kural tabanlı kullan
+            
+            # === ENSEMBLE KARAR (DUZELTILMIS) ===
+            if self.deep_predictor and self.deep_predictor.is_trained:
+                
+                # KRITIK: LSTM NEUTRAL yuksekse sinyal verme
+                # Model %60 NEUTRAL verisiyle egitildi, NEUTRAL = belirsizlik
+                dl_neutral_prob = dl_pred.probabilities.get('neutral', 0.34) if 'dl_pred' in dir() else 0.34
+                if dl_neutral_prob > 0.50:
+                    continue  # Belirsiz durum, sinyal yok
+                
+                # DOWN sinyalleri cok daha iyi (%54 vs %1.8)
+                # DOWN'a bias ver
+                DOWN_BIAS = 1.5  # DOWN sinyallerine %50 bonus
+                
+                # Rule-based yon skorlari (normalize)
+                rule_up = (rule_score / 100) if rule_direction == "up" else 0
+                rule_down = (rule_score / 100) if rule_direction == "down" else 0
+                
+                # Ensemble skor - DOWN biased
+                up_score = (
+                    rule_up * self.ensemble_weights["rule_based"] +
+                    dl_up_prob * self.ensemble_weights["deep_learning"]
+                )
+                down_score = (
+                    rule_down * self.ensemble_weights["rule_based"] +
+                    dl_down_prob * self.ensemble_weights["deep_learning"]
+                ) * DOWN_BIAS  # DOWN bonus
+                
+                # Fark esigi - net karar icin (YUKSELTILDI)
+                score_diff = abs(up_score - down_score)
+                
+                if score_diff < 0.15:  # Cok yakin skorlar - sinyal yok
+                    continue
+                
+                # KRITIK: Sadece guclu DOWN sinyalleri kabul et
+                # UP sinyalleri cok yanlis cikiyor
+                if down_score > up_score:
+                    direction = "down"
+                    confidence = down_score / (up_score + down_score + 0.0001)
+                    total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
+                elif up_score > down_score * 1.5:  # UP icin cok yuksek esik
+                    # Sadece rule-based da UP diyorsa ve guclu bir sinyalse
+                    if rule_direction == "up" and rule_confidence > 0.5:
+                        direction = "up"
+                        confidence = up_score / (up_score + down_score + 0.0001)
+                        total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
+                    else:
+                        continue  # Zayif UP sinyali, atla
+                else:
+                    continue  # Belirsiz, sinyal yok
+            else:
+                # Deep Learning yoksa sadece kural tabanlı
+                direction = rule_direction
+                confidence = rule_confidence
+                total_score = rule_score
+            
+            # === GUCLU FILTRELER ===
+            # Sinyal esigi - YUKSELTILDI
+            if total_score < 55:
+                continue
+            
+            # Neutral sinyalleri atla
+            if direction == "neutral":
+                continue
+            
+            # Minimum confidence esigi - COK YUKSELTILDI
+            if confidence < 0.55:
                 continue
             
             # Gerçek sonuç
@@ -344,6 +620,12 @@ class Backtester:
                 pnl = abs(actual_change)
             else:
                 pnl = -abs(actual_change)
+            
+            # Skora DL bilgisi ekle
+            scores['dl_direction'] = dl_direction
+            scores['dl_confidence'] = dl_confidence
+            scores['dl_up_prob'] = dl_up_prob
+            scores['dl_down_prob'] = dl_down_prob
             
             result = BacktestResult(
                 timestamp=row['timestamp'],
@@ -603,17 +885,19 @@ class Backtester:
             print(f"[Backtest] Optimize agirliklar: {weights_path}")
 
 
-async def fetch_top_volatile_coins(count: int = 5) -> List[str]:
+async def fetch_top_volatile_coins(count: int = 10, include_major: bool = True) -> List[str]:
     """
     En cok fiyat degisimi yasayan coinleri bul.
+    Major coinler her zaman dahil (daha guvenilir).
     
     Args:
         count: Kac coin dondurmek istiyorsun
+        include_major: BTC/ETH/SOL zorunlu dahil edilsin mi (varsayilan: True)
         
     Returns:
-        Symbol listesi ['BTCUSDT', 'ETHUSDT', ...]
+        Symbol listesi ['XYZUSDT', ...]
     """
-    print(f"[Backtest] En volatil {count} coin araniyor...")
+    print(f"[Backtest] En volatil {count} coin araniyor (major dahil)...")
     
     async with aiohttp.ClientSession() as session:
         url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
@@ -622,44 +906,93 @@ async def fetch_top_volatile_coins(count: int = 5) -> List[str]:
             async with session.get(url) as resp:
                 if resp.status != 200:
                     print(f"[Backtest] API hatasi: {resp.status}")
-                    return ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
+                    return ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT",
+                            "ADAUSDT", "AVAXUSDT", "LINKUSDT", "MATICUSDT", "DOTUSDT"][:count]
                 
                 data = await resp.json()
                 
-                # USDT paritelerini filtrele ve mutlak degisime gore sirala
-                usdt_pairs = [
-                    {
-                        "symbol": d["symbol"],
-                        "change": abs(float(d.get("priceChangePercent", 0))),
-                        "volume": float(d.get("quoteVolume", 0))
-                    }
-                    for d in data
-                    if d["symbol"].endswith("USDT") and float(d.get("quoteVolume", 0)) > 10_000_000  # Min $10M hacim
-                ]
+                # Major coinler - her zaman dahil (daha guvenilir)
+                major_coins = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+                # Top tier altcoinler - yuksek likidite
+                tier2_coins = ["XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT", "LINKUSDT", "MATICUSDT"]
                 
-                # Oncelik: Yuksek volatilite + yuksek hacim
-                # Volatilite skoru = abs(change) * log(volume)
+                # USDT paritelerini filtrele
+                usdt_pairs = []
+                for d in data:
+                    symbol = d["symbol"]
+                    if not symbol.endswith("USDT"):
+                        continue
+                    
+                    change = abs(float(d.get("priceChangePercent", 0)))
+                    volume = float(d.get("quoteVolume", 0))
+                    
+                    is_major = symbol in major_coins
+                    is_tier2 = symbol in tier2_coins
+                    
+                    # Filtreler (major'lar icin daha dusuk, digerleri icin yuksek):
+                    if is_major:
+                        # Major coinler her zaman al
+                        min_vol = 100_000_000  # $100M
+                    elif is_tier2:
+                        # Tier2 coinler
+                        min_vol = 50_000_000   # $50M
+                    else:
+                        # Diger altcoinler - cok yuksek hacim ve sinirli volatilite
+                        min_vol = 100_000_000  # $100M - dusuk hacim = manipulasyon riski
+                        if change < 2.0 or change > 15:  # %2-15 arasi volatilite
+                            continue
+                    
+                    if volume < min_vol:
+                        continue
+                    
+                    usdt_pairs.append({
+                        "symbol": symbol,
+                        "change": change,
+                        "volume": volume,
+                        "is_major": is_major,
+                        "is_tier2": is_tier2
+                    })
+                
+                # Skor hesapla - major ve tier2'ye bonus
                 import math
                 for p in usdt_pairs:
-                    p["score"] = p["change"] * math.log10(max(p["volume"], 1))
+                    base_score = p["change"] * math.log10(max(p["volume"], 1))
+                    if p["is_major"]:
+                        base_score *= 2.0  # Major bonus
+                    elif p["is_tier2"]:
+                        base_score *= 1.5  # Tier2 bonus
+                    p["score"] = base_score
                 
                 # Skora gore sirala
                 usdt_pairs.sort(key=lambda x: x["score"], reverse=True)
                 
-                # En iyi coinleri dondur (major coinler her zaman dahil)
-                major_coins = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
-                volatile_coins = [p["symbol"] for p in usdt_pairs if p["symbol"] not in major_coins][:count]
+                # Major coinleri her zaman en basa ekle
+                top_coins = []
+                if include_major:
+                    for mc in major_coins:
+                        if any(p["symbol"] == mc for p in usdt_pairs):
+                            top_coins.append(mc)
                 
-                # Major + Volatil kombinasyonu
-                top_coins = major_coins + volatile_coins[:count-len(major_coins)]
-                top_coins = top_coins[:count]  # Max count
+                # Kalan slotlari en volatil coinlerle doldur
+                for p in usdt_pairs:
+                    if p["symbol"] not in top_coins and len(top_coins) < count:
+                        top_coins.append(p["symbol"])
+                
+                if len(top_coins) < count:
+                    # Yeterli coin bulunamadıysa fallback
+                    fallback = ["SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", 
+                               "AVAXUSDT", "LINKUSDT", "MATICUSDT", "DOTUSDT"]
+                    for coin in fallback:
+                        if coin not in top_coins and len(top_coins) < count:
+                            top_coins.append(coin)
                 
                 print(f"[Backtest] En volatil coinler: {top_coins}")
                 return top_coins
                 
         except Exception as e:
             print(f"[Backtest] Coin arama hatasi: {e}")
-            return ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
+            return ["SOLUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT",
+                    "LINKUSDT", "MATICUSDT", "DOTUSDT", "ATOMUSDT", "NEARUSDT"][:count]
 
 
 async def run_backtest(symbols: List[str] = None, days: int = 3, optimize: bool = False):
@@ -671,15 +1004,20 @@ async def run_backtest(symbols: List[str] = None, days: int = 3, optimize: bool 
     return await bt.run(symbols, optimize=optimize)
 
 
-async def run_smart_backtest(days: int = 3, coin_count: int = 5, optimize: bool = True, train_ml: bool = True):
+async def run_smart_backtest(days: int = 3, coin_count: int = 5, optimize: bool = True, 
+                             train_ml: bool = True, use_deep_learning: bool = True,
+                             train_lstm: bool = False):
     """
     Akilli backtest - En volatil coinleri otomatik bulur ve egitir.
+    LSTM + LightGBM + Rule-based ensemble sistem.
     
     Args:
         days: Kac gunluk veri
         coin_count: Kac coin test edilsin
         optimize: Agirlik optimizasyonu yapilsin mi
         train_ml: LightGBM modeli egitilsin mi
+        use_deep_learning: LSTM derin ogrenme kullanilsin mi
+        train_lstm: LSTM modeli yeniden egitilsin mi
         
     Returns:
         BacktestMetrics
@@ -690,15 +1028,24 @@ async def run_smart_backtest(days: int = 3, coin_count: int = 5, optimize: bool 
         asyncio.run(run_smart_backtest(days=3, coin_count=5))
     """
     print(f"\n{'='*60}")
-    print(f"     AKILLI BACKTEST")
+    print(f"     AKILLI BACKTEST (Deep Learning)")
     print(f"     {days} gun, en volatil {coin_count} coin")
     print(f"{'='*60}\n")
+    
+    # LSTM egitimi (istege bagli)
+    if train_lstm and use_deep_learning:
+        print("[Backtest] LSTM modeli egitiliyor...")
+        try:
+            from core.deep_learning_predictor import train_lstm_model
+            await train_lstm_model(days=days+2, symbols=None)
+        except Exception as e:
+            print(f"[Backtest] LSTM egitim hatasi: {e}")
     
     # En volatil coinleri bul
     top_coins = await fetch_top_volatile_coins(coin_count)
     
     # Backtest calistir
-    bt = Backtester(days=days)
+    bt = Backtester(days=days, use_deep_learning=use_deep_learning)
     metrics = await bt.run(top_coins, optimize=optimize)
     
     # ML egitimi (istege bagli)
@@ -720,6 +1067,10 @@ async def run_smart_backtest(days: int = 3, coin_count: int = 5, optimize: bool 
                     "tf_1m": 1 if r.predicted_direction == "up" else -1,
                     "btc_lag": 0,
                     "hour_of_day": r.timestamp.hour if hasattr(r.timestamp, 'hour') else 12,
+                    "rsi": r.signal_scores.get('rsi', 50),
+                    "macd_direction": r.signal_scores.get('macd_direction', 0),
+                    "stoch_direction": r.signal_scores.get('stoch_direction', 0),
+                    "dl_confidence": r.signal_scores.get('dl_confidence', 0.33),
                     "target_change_percent": r.actual_change_percent
                 }
                 for r in bt.results
@@ -742,6 +1093,9 @@ async def run_smart_backtest(days: int = 3, coin_count: int = 5, optimize: bool 
     
     print(f"\n{'='*60}")
     print(f"     TAMAMLANDI!")
+    if metrics:
+        print(f"     Win Rate: {metrics.win_rate:.1f}%")
+        print(f"     PnL: {metrics.total_pnl:+.2f}%")
     print(f"{'='*60}\n")
     
     return metrics

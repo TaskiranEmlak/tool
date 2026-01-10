@@ -22,5 +22,10 @@ plotly>=5.18.0
 # Utilities
 python-dateutil>=2.8.0
 
+# Deep Learning
+tensorflow>=2.15.0
+keras>=3.0.0
+ta>=0.11.0
+
 # Optional: Sound (for sonification)
 # pygame>=2.5.0
