@@ -82,6 +82,12 @@ class Backtester:
         self.days = days
         self.use_deep_learning = use_deep_learning
         
+        # === TRADING PARAMETRELERI (GERCEKCI) ===
+        self.COMMISSION = 0.001  # %0.1 (Taker fee + slippage)
+        self.TP_PERCENT = 0.006  # %0.6 Take Profit
+        self.SL_PERCENT = 0.003  # %0.3 Stop Loss
+        self.MIN_PROFIT_THRESHOLD = 0.002  # %0.2 - komisyon ustunde kar
+        
         # Mevcut ağırlıklar (varsayılan)
         self.weights = {
             "volume": 15,
@@ -219,10 +225,12 @@ class Backtester:
         df['bb_upper'] = df['bb_mid'] + (df['bb_std'] * 2)
         df['bb_lower'] = df['bb_mid'] - (df['bb_std'] * 2)
         df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower']).replace(0, 0.0001)
+        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_mid'] * 100  # Volatilite gostergesi
         
-        # EMA Trend (9, 21)
+        # EMA Trend (9, 21, 50)
         df['ema9'] = df['close'].ewm(span=9, adjust=False).mean()
         df['ema21'] = df['close'].ewm(span=21, adjust=False).mean()
+        df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()  # Trend filtresi icin
         df['ema_trend'] = np.where(df['ema9'] > df['ema21'], 1, -1)
         
         # 20 dakika sonraki fiyat (4 mum sonrasi)
@@ -551,15 +559,12 @@ class Backtester:
                 if dl_neutral_prob > 0.50:
                     continue  # Belirsiz durum, sinyal yok
                 
-                # DOWN sinyalleri cok daha iyi (%54 vs %1.8)
-                # DOWN'a bias ver
-                DOWN_BIAS = 1.5  # DOWN sinyallerine %50 bonus
                 
                 # Rule-based yon skorlari (normalize)
                 rule_up = (rule_score / 100) if rule_direction == "up" else 0
                 rule_down = (rule_score / 100) if rule_direction == "down" else 0
                 
-                # Ensemble skor - DOWN biased
+                # Ensemble skor - DENGELI (bias kaldirildi)
                 up_score = (
                     rule_up * self.ensemble_weights["rule_based"] +
                     dl_up_prob * self.ensemble_weights["deep_learning"]
@@ -567,78 +572,134 @@ class Backtester:
                 down_score = (
                     rule_down * self.ensemble_weights["rule_based"] +
                     dl_down_prob * self.ensemble_weights["deep_learning"]
-                ) * DOWN_BIAS  # DOWN bonus
+                )
                 
-                # Fark esigi - net karar icin (YUKSELTILDI)
+                # Fark esigi - net karar icin
                 score_diff = abs(up_score - down_score)
                 
-                if score_diff < 0.15:  # Cok yakin skorlar - sinyal yok
+                if score_diff < 0.12:  # Cok yakin skorlar - sinyal yok
                     continue
                 
-                # KRITIK: Sadece guclu DOWN sinyalleri kabul et
-                # UP sinyalleri cok yanlis cikiyor
-                if down_score > up_score:
-                    direction = "down"
-                    confidence = down_score / (up_score + down_score + 0.0001)
-                    total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
-                elif up_score > down_score * 1.5:  # UP icin cok yuksek esik
-                    # Sadece rule-based da UP diyorsa ve guclu bir sinyalse
-                    if rule_direction == "up" and rule_confidence > 0.5:
+                # YON KARARI - DENGELI
+                if up_score > down_score:
+                    # UP icin hem LSTM hem rule-based onay gerekli
+                    if dl_direction in ["up", "neutral"] and rule_direction == "up":
                         direction = "up"
                         confidence = up_score / (up_score + down_score + 0.0001)
                         total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
                     else:
-                        continue  # Zayif UP sinyali, atla
+                        continue  # Onay yok, atla
                 else:
-                    continue  # Belirsiz, sinyal yok
+                    # DOWN icin daha esnek
+                    if dl_direction in ["down", "neutral"] or rule_direction == "down":
+                        direction = "down"
+                        confidence = down_score / (up_score + down_score + 0.0001)
+                        total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
+                    else:
+                        continue
             else:
                 # Deep Learning yoksa sadece kural tabanlı
                 direction = rule_direction
                 confidence = rule_confidence
                 total_score = rule_score
             
+            # === TREND FİLTRESİ (EMA50) ===
+            ema50 = row.get('ema_50', row['close'])
+            trend_up = row['close'] > ema50
+            
+            # Trend tersi islem acma!
+            if direction == "up" and not trend_up:
+                continue  # Dusus trendinde LONG acma
+            if direction == "down" and trend_up:
+                continue  # Yukselis trendinde SHORT acma
+            
+            # === VOLATILITE FILTRESI ===
+            bb_width = row.get('bb_width', 2.0)
+            if bb_width < 0.5:  # Bollinger cok dar - squeeze
+                continue  # Yatay piyasada islem acma
+            
             # === GUCLU FILTRELER ===
-            # Sinyal esigi - YUKSELTILDI
-            if total_score < 55:
+            if total_score < 70:  # Yuksek esik
                 continue
             
-            # Neutral sinyalleri atla
             if direction == "neutral":
                 continue
             
-            # Minimum confidence esigi - COK YUKSELTILDI
             if confidence < 0.55:
                 continue
             
-            # Gerçek sonuç
+            # === GERCEKCI TP/SL SIMULASYONU ===
+            entry_price = row['close']
+            
+            # Gelecek 4 mumun (20dk) high/low'u
+            future_slice = df.iloc[idx+1:idx+5]
+            if len(future_slice) < 4:
+                continue
+            
+            future_high = future_slice['high'].max()
+            future_low = future_slice['low'].min()
+            
+            win = False
+            pnl = 0.0
+            
+            if direction == "up":
+                tp_price = entry_price * (1 + self.TP_PERCENT)
+                sl_price = entry_price * (1 - self.SL_PERCENT)
+                
+                # Hangisi once oldu - TP mi SL mi?
+                # Basit kontrol: low SL'e indiyse stop
+                if future_low <= sl_price:
+                    win = False
+                    pnl = -self.SL_PERCENT - self.COMMISSION
+                elif future_high >= tp_price:
+                    win = True
+                    pnl = self.TP_PERCENT - self.COMMISSION
+                else:
+                    # Ne TP ne SL - 20dk sonundaki fiyat
+                    exit_price = future_slice.iloc[-1]['close']
+                    raw_change = (exit_price - entry_price) / entry_price
+                    pnl = raw_change - self.COMMISSION
+                    win = pnl > self.MIN_PROFIT_THRESHOLD
+            else:  # DOWN
+                tp_price = entry_price * (1 - self.TP_PERCENT)
+                sl_price = entry_price * (1 + self.SL_PERCENT)
+                
+                if future_high >= sl_price:
+                    win = False
+                    pnl = -self.SL_PERCENT - self.COMMISSION
+                elif future_low <= tp_price:
+                    win = True
+                    pnl = self.TP_PERCENT - self.COMMISSION
+                else:
+                    exit_price = future_slice.iloc[-1]['close']
+                    raw_change = (entry_price - exit_price) / entry_price
+                    pnl = raw_change - self.COMMISSION
+                    win = pnl > self.MIN_PROFIT_THRESHOLD
+            
+            # Actual values for logging
             actual_change = row['change_20m']
             actual_direction = "up" if actual_change > 0 else "down"
-            direction_correct = (direction == actual_direction)
-            
-            # PnL (yön doğruysa kar, yanlışsa zarar)
-            if direction_correct:
-                pnl = abs(actual_change)
-            else:
-                pnl = -abs(actual_change)
             
             # Skora DL bilgisi ekle
             scores['dl_direction'] = dl_direction
             scores['dl_confidence'] = dl_confidence
             scores['dl_up_prob'] = dl_up_prob
             scores['dl_down_prob'] = dl_down_prob
+            scores['trend_up'] = trend_up
+            scores['bb_width'] = bb_width
             
             result = BacktestResult(
                 timestamp=row['timestamp'],
                 symbol=symbol,
-                entry_price=row['close'],
+                entry_price=entry_price,
                 predicted_direction=direction,
-                predicted_move_percent=total_score / 60,  # Score to % mapping
+                predicted_move_percent=total_score / 60,
                 confidence=confidence,
                 actual_price_20m=row['price_20m'],
-                actual_change_percent=actual_change,
+                actual_change_percent=pnl * 100,  # Gercek PnL (komisyon dahil)
                 actual_direction=actual_direction,
-                direction_correct=direction_correct,
-                pnl_percent=pnl,
+                direction_correct=win,
+                pnl_percent=pnl * 100,  # % olarak
                 signal_scores=scores
             )
             

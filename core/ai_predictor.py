@@ -96,9 +96,10 @@ class AIPredictor:
             X = df[self.feature_names].values
             y = df['target_change_percent'].values
             
-            # Train/Test split
+            # Train/Test split - shuffle=False KRITIK (zaman serisi icin)
+            # Shuffle yaparsak model gelecegi egitim setinde gorur (Data Leakage)
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
+                X, y, test_size=0.2, shuffle=False
             )
             
             # Ölçekleme
@@ -389,9 +390,10 @@ class LightGBMPredictor:
             X = df[available_features].fillna(0).values
             y = df[target_column].values
             
-            # Train/Test split (time-based olmalı ama basitlik için random)
+            # Train/Test split - shuffle=False KRITIK (zaman serisi icin)
+            # Shuffle yaparsak model gelecegi egitim setinde gorur (Data Leakage)
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
+                X, y, test_size=0.2, shuffle=False
             )
             
             # Ölçekleme

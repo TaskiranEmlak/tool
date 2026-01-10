@@ -305,8 +305,13 @@ class LSTMPredictor:
         df['rolling_std_12'] = df['returns'].rolling(12).std()
         df['zscore'] = (df['returns'] - df['rolling_mean_12']) / df['rolling_std_12'].replace(0, 0.0001)
         
-        # NaN temizliği
-        df = df.fillna(method='ffill').fillna(0)
+        # NaN temizliği - COLD START duzeltmesi
+        # Ilk 60 satiri at (en buyuk indikatör periyodu kadar)
+        # fillna(0) yerine drop yapmak daha dogru - 0 ile doldurmak
+        # indikatorleri bozar ve yanlis sinyaller uretir
+        df = df.iloc[60:].reset_index(drop=True)  # Ilk 60 satiri at
+        df = df.fillna(method='ffill')  # Kalan NaN'ler icin forward fill
+        df = df.dropna()  # Hala NaN varsa at
         
         return df
     
