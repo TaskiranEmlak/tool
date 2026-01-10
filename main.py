@@ -22,6 +22,7 @@ from core.scanner import VolatilityScanner
 from core.predictor import Predictor, CoinPrediction
 from core.database import Database
 from signals.signal_manager import SignalManager
+from indicators.benford import WashTradingFilter
 from gui.app import TradingApp
 
 
@@ -33,11 +34,12 @@ class TradingEngine:
     def __init__(self, app: TradingApp):
         self.app = app
         
-        # Bileşenler
+        # Bilesenler
         self.scanner = VolatilityScanner()
         self.predictor = Predictor()
         self.db = Database()
         self.signal_manager = SignalManager(self.db)
+        self.wash_filter = WashTradingFilter()  # Benford filtresi
         
         # Durum
         self.running = False
@@ -211,6 +213,11 @@ class TradingEngine:
         for r in pred.reasons:
             print(f"      - {r}")
         print(f"{'='*50}\n")
+        
+        # Benford wash trading kontrolu
+        is_suspicious = self.wash_filter.is_suspicious(pred.symbol)
+        if is_suspicious:
+            print(f"[UYARI] {pred.symbol} supheli hacim tespit edildi (Wash Trading riski)")
         
         # Veritabanina kaydet
         try:

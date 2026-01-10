@@ -1,12 +1,20 @@
-# HFT Trading Tools - Tkinter GUI v2
+# HFT Trading Tools - Modern Birlesik Arayuz v5
 """
-Volatilite tarayıcı + İzleme Listesi için masaüstü arayüzü.
+Sekmeli modern arayuz - Tum ozellikler tek yerde.
+
+Sekmeler:
+1. RADAR - Volatil coinler ve tarama
+2. ANALIZ - AI tahminleri ve grafikler
+3. BACKTEST - Gecmis performans testi
+4. ISTATISTIK - Sinyal gecmisi ve performans
 """
 
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 from datetime import datetime
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Dict
+import threading
+import asyncio
 import sys
 import os
 
@@ -15,327 +23,577 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class TradingApp:
     """
-    Ana Tkinter uygulaması.
-    3 bölüm: Volatil Coinler | İzleme Listesi | Sinyaller
+    Modern sekmeli trading arayuzu.
+    Tum ozellikler tek uygulamada.
     """
     
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("🚀 HFT Trading Tools - Volatilite Tarayıcı v2")
-        self.root.geometry("1400x750")
-        self.root.configure(bg="#0d1117")
+        self.root.title("HFT Trading Tools v5.0 - God Mode")
+        self.root.geometry("1400x850")
+        self.root.configure(bg="#1a1a2e")
         
-        # Durum
-        self.running = False
-        
-        # Callback'ler
+        # Callbacks
         self.on_start: Optional[Callable] = None
         self.on_stop: Optional[Callable] = None
         
-        # UI oluştur
+        # Durum
+        self.running = False
+        self.signal_count = 0
+        
+        # UI olustur
         self._create_styles()
         self._create_header()
-        self._create_main_content()
+        self._create_notebook()
         self._create_status_bar()
+        
+        # Saat guncelle
+        self._update_time()
     
     def _create_styles(self):
         """Tema ve stiller"""
         style = ttk.Style()
         style.theme_use("clam")
         
-        # Koyu tema
-        style.configure("Dark.TFrame", background="#0d1117")
-        style.configure("Dark.TLabel", background="#0d1117", foreground="#c9d1d9", font=("Segoe UI", 10))
-        style.configure("Header.TLabel", background="#0d1117", foreground="#58a6ff", font=("Segoe UI", 13, "bold"))
-        style.configure("Title.TLabel", background="#0d1117", foreground="#f0f6fc", font=("Segoe UI", 11, "bold"))
+        # Renkler
+        self.colors = {
+            "bg": "#1a1a2e",
+            "card": "#16213e",
+            "accent": "#0f3460",
+            "green": "#00d26a",
+            "red": "#ff6b6b",
+            "orange": "#f0883e",
+            "text": "#e8e8e8",
+            "muted": "#8b949e"
+        }
         
-        # Treeview
+        # Treeview stili
         style.configure("Dark.Treeview",
-                       background="#161b22",
-                       foreground="#c9d1d9",
-                       fieldbackground="#161b22",
-                       font=("Consolas", 10),
-                       rowheight=25)
+                       background=self.colors["card"],
+                       foreground=self.colors["text"],
+                       fieldbackground=self.colors["card"],
+                       rowheight=28)
         style.configure("Dark.Treeview.Heading",
-                       background="#21262d",
-                       foreground="#c9d1d9",
-                       font=("Segoe UI", 9, "bold"))
-        style.map("Dark.Treeview",
-                 background=[("selected", "#388bfd")],
-                 foreground=[("selected", "white")])
+                       background=self.colors["accent"],
+                       foreground=self.colors["text"],
+                       font=("Segoe UI", 10, "bold"))
+        style.map("Dark.Treeview", background=[("selected", self.colors["accent"])])
+        
+        # Notebook stili
+        style.configure("TNotebook", background=self.colors["bg"])
+        style.configure("TNotebook.Tab", 
+                       background=self.colors["card"],
+                       foreground=self.colors["text"],
+                       padding=[20, 10],
+                       font=("Segoe UI", 11, "bold"))
+        style.map("TNotebook.Tab",
+                 background=[("selected", self.colors["accent"])],
+                 foreground=[("selected", self.colors["green"])])
+        
+        # Button stili
+        style.configure("Start.TButton",
+                       background=self.colors["green"],
+                       foreground="white",
+                       font=("Segoe UI", 11, "bold"),
+                       padding=10)
+        style.configure("Stop.TButton",
+                       background=self.colors["red"],
+                       foreground="white",
+                       font=("Segoe UI", 11, "bold"),
+                       padding=10)
     
     def _create_header(self):
-        """Üst başlık"""
-        header = ttk.Frame(self.root, style="Dark.TFrame")
-        header.pack(fill=tk.X, padx=15, pady=10)
+        """Ust baslik"""
+        header = tk.Frame(self.root, bg=self.colors["card"], height=70)
+        header.pack(fill="x", padx=5, pady=5)
+        header.pack_propagate(False)
         
         # Logo
-        title = ttk.Label(header, text="🚀 HFT Trading Tools", style="Header.TLabel")
-        title.pack(side=tk.LEFT)
+        logo = tk.Label(header, text="HFT TRADING TOOLS", 
+                       font=("Segoe UI", 18, "bold"),
+                       bg=self.colors["card"], fg=self.colors["green"])
+        logo.pack(side="left", padx=20, pady=15)
+        
+        # Versiyon
+        ver = tk.Label(header, text="v5.0 God Mode", 
+                      font=("Segoe UI", 10),
+                      bg=self.colors["card"], fg=self.colors["muted"])
+        ver.pack(side="left", pady=15)
         
         # Butonlar
-        btn_frame = ttk.Frame(header, style="Dark.TFrame")
-        btn_frame.pack(side=tk.RIGHT)
+        btn_frame = tk.Frame(header, bg=self.colors["card"])
+        btn_frame.pack(side="right", padx=20, pady=10)
         
-        self.start_btn = tk.Button(btn_frame, text="▶ BAŞLAT", bg="#238636", fg="white",
-                                   font=("Segoe UI", 10, "bold"), padx=15, pady=3,
-                                   command=self._on_start_click, cursor="hand2",
-                                   activebackground="#2ea043")
-        self.start_btn.pack(side=tk.LEFT, padx=3)
+        self.start_btn = tk.Button(btn_frame, text="BASLAT", 
+                                   bg=self.colors["green"], fg="white",
+                                   font=("Segoe UI", 11, "bold"),
+                                   width=10, command=self._on_start_click)
+        self.start_btn.pack(side="left", padx=5)
         
-        self.stop_btn = tk.Button(btn_frame, text="⏹ DURDUR", bg="#da3633", fg="white",
-                                  font=("Segoe UI", 10, "bold"), padx=15, pady=3,
-                                  command=self._on_stop_click, state=tk.DISABLED, cursor="hand2",
-                                  activebackground="#f85149")
-        self.stop_btn.pack(side=tk.LEFT, padx=3)
+        self.stop_btn = tk.Button(btn_frame, text="DURDUR", 
+                                  bg=self.colors["red"], fg="white",
+                                  font=("Segoe UI", 11, "bold"),
+                                  width=10, command=self._on_stop_click, state="disabled")
+        self.stop_btn.pack(side="left", padx=5)
+        
+        # Saat
+        self.time_label = tk.Label(header, text="00:00:00",
+                                  font=("Consolas", 14, "bold"),
+                                  bg=self.colors["card"], fg=self.colors["text"])
+        self.time_label.pack(side="right", padx=20)
     
-    def _create_main_content(self):
-        """Ana içerik - 3 panel"""
-        main = ttk.Frame(self.root, style="Dark.TFrame")
-        main.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+    def _create_notebook(self):
+        """Sekmeli ana icerik"""
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill="both", expand=True, padx=5, pady=5)
         
-        # ===== SOL PANEL: Volatil Coinler =====
-        left_frame = ttk.Frame(main, style="Dark.TFrame")
-        left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-        
-        ttk.Label(left_frame, text="📊 Volatil Coinler (1m)", style="Title.TLabel").pack(anchor=tk.W)
-        
-        columns = ("symbol", "price", "change", "volume")
-        self.coins_table = ttk.Treeview(left_frame, columns=columns, show="headings",
-                                        style="Dark.Treeview", height=18)
-        
-        self.coins_table.heading("symbol", text="Sembol")
-        self.coins_table.heading("price", text="Fiyat")
-        self.coins_table.heading("change", text="1m Δ%")
-        self.coins_table.heading("volume", text="24h Vol")
-        
-        self.coins_table.column("symbol", width=90, anchor=tk.CENTER)
-        self.coins_table.column("price", width=90, anchor=tk.E)
-        self.coins_table.column("change", width=70, anchor=tk.E)
-        self.coins_table.column("volume", width=80, anchor=tk.E)
-        
-        self.coins_table.pack(fill=tk.BOTH, expand=True, pady=5)
-        
-        # ===== ORTA PANEL: İzleme Listesi =====
-        mid_frame = ttk.Frame(main, style="Dark.TFrame", width=350)
-        mid_frame.pack(side=tk.LEFT, fill=tk.Y, padx=5)
-        mid_frame.pack_propagate(False)
-        
-        ttk.Label(mid_frame, text="🎯 Tahmin Skorları", style="Title.TLabel").pack(anchor=tk.W)
-        
-        # İzleme sayacı
-        self.watch_count_label = ttk.Label(mid_frame, text="0 coin izleniyor", style="Dark.TLabel")
-        self.watch_count_label.pack(anchor=tk.W)
-        
-        # İzleme tablosu
-        watch_cols = ("symbol", "obi", "score", "time")
-        self.watch_table = ttk.Treeview(mid_frame, columns=watch_cols, show="headings",
-                                        style="Dark.Treeview", height=8)
-        
-        self.watch_table.heading("symbol", text="Sembol")
-        self.watch_table.heading("obi", text="OBI")
-        self.watch_table.heading("score", text="Tahmin")
-        self.watch_table.heading("time", text="Pot.%")
-        
-        self.watch_table.column("symbol", width=80, anchor=tk.CENTER)
-        self.watch_table.column("obi", width=60, anchor=tk.E)
-        self.watch_table.column("score", width=50, anchor=tk.E)
-        self.watch_table.column("time", width=50, anchor=tk.E)
-        
-        self.watch_table.pack(fill=tk.X, pady=5)
-        
-        # Göstergeler
-        ttk.Label(mid_frame, text="📈 Anlık Göstergeler", style="Title.TLabel").pack(anchor=tk.W, pady=(15, 5))
-        
-        self.indicators_frame = ttk.Frame(mid_frame, style="Dark.TFrame")
-        self.indicators_frame.pack(fill=tk.X)
-        
-        self.indicator_labels = {}
-        self._create_indicator_row("Analiz:", "0")
-        self._create_indicator_row("Ort. Skor:", "0")
-        self._create_indicator_row("En Yüksek:", "0")
-        
-        # ===== SAĞ PANEL: Sinyaller =====
-        right_frame = ttk.Frame(main, style="Dark.TFrame", width=300)
-        right_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
-        right_frame.pack_propagate(False)
-        
-        ttk.Label(right_frame, text="🎯 Sinyaller", style="Title.TLabel").pack(anchor=tk.W)
-        
-        # Sinyal sayacı
-        self.signal_count_label = ttk.Label(right_frame, text="0 sinyal", style="Dark.TLabel")
-        self.signal_count_label.pack(anchor=tk.W)
-        
-        # Sinyal listesi
-        self.signals_text = tk.Text(right_frame, bg="#161b22", fg="#c9d1d9",
-                                    font=("Consolas", 10), height=18, wrap=tk.WORD,
-                                    relief=tk.FLAT, padx=5, pady=5)
-        self.signals_text.pack(fill=tk.BOTH, expand=True, pady=5)
-        self.signals_text.insert(tk.END, "Sinyal bekleniyor...\n")
-        self.signals_text.config(state=tk.DISABLED)
+        # Sekmeler
+        self._create_radar_tab()
+        self._create_analysis_tab()
+        self._create_backtest_tab()
+        self._create_stats_tab()
     
-    def _create_indicator_row(self, label: str, value: str):
-        """Gösterge satırı"""
-        row = ttk.Frame(self.indicators_frame, style="Dark.TFrame")
-        row.pack(fill=tk.X, pady=1)
+    def _create_radar_tab(self):
+        """RADAR sekmesi - Volatil coinler ve tarama"""
+        tab = tk.Frame(self.notebook, bg=self.colors["bg"])
+        self.notebook.add(tab, text="  RADAR  ")
         
-        ttk.Label(row, text=label, style="Dark.TLabel", width=12).pack(side=tk.LEFT)
-        value_label = ttk.Label(row, text=value, style="Dark.TLabel", foreground="#58a6ff")
-        value_label.pack(side=tk.RIGHT)
-        self.indicator_labels[label] = value_label
+        # Iki panel
+        left = tk.Frame(tab, bg=self.colors["card"], width=500)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 5), pady=5)
+        
+        right = tk.Frame(tab, bg=self.colors["card"], width=500)
+        right.pack(side="right", fill="both", expand=True, pady=5)
+        
+        # Sol: Volatil Coinler
+        tk.Label(left, text="VOLATIL COINLER", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["orange"]).pack(pady=10)
+        
+        cols = ("symbol", "price", "change", "volume")
+        self.coins_tree = ttk.Treeview(left, columns=cols, show="headings", 
+                                       style="Dark.Treeview", height=20)
+        self.coins_tree.heading("symbol", text="Coin")
+        self.coins_tree.heading("price", text="Fiyat")
+        self.coins_tree.heading("change", text="1m %")
+        self.coins_tree.heading("volume", text="Hacim")
+        self.coins_tree.column("symbol", width=100)
+        self.coins_tree.column("price", width=100, anchor="e")
+        self.coins_tree.column("change", width=80, anchor="e")
+        self.coins_tree.column("volume", width=120, anchor="e")
+        self.coins_tree.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Sag: Izleme Listesi
+        tk.Label(right, text="IZLEME LISTESI", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["green"]).pack(pady=10)
+        
+        cols2 = ("symbol", "obi", "score", "status")
+        self.watch_tree = ttk.Treeview(right, columns=cols2, show="headings",
+                                       style="Dark.Treeview", height=20)
+        self.watch_tree.heading("symbol", text="Coin")
+        self.watch_tree.heading("obi", text="OBI")
+        self.watch_tree.heading("score", text="Skor")
+        self.watch_tree.heading("status", text="Durum")
+        self.watch_tree.column("symbol", width=100)
+        self.watch_tree.column("obi", width=80, anchor="e")
+        self.watch_tree.column("score", width=80, anchor="e")
+        self.watch_tree.column("status", width=100)
+        self.watch_tree.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Gostergeler
+        ind_frame = tk.Frame(right, bg=self.colors["accent"])
+        ind_frame.pack(fill="x", padx=10, pady=10)
+        
+        self.ind_watched = tk.Label(ind_frame, text="Takip: 0", 
+                                    font=("Consolas", 11, "bold"),
+                                    bg=self.colors["accent"], fg=self.colors["text"])
+        self.ind_watched.pack(side="left", padx=20, pady=10)
+        
+        self.ind_avg = tk.Label(ind_frame, text="Ort: 0", 
+                               font=("Consolas", 11, "bold"),
+                               bg=self.colors["accent"], fg=self.colors["text"])
+        self.ind_avg.pack(side="left", padx=20, pady=10)
+        
+        self.ind_top = tk.Label(ind_frame, text="Top: 0", 
+                               font=("Consolas", 11, "bold"),
+                               bg=self.colors["accent"], fg=self.colors["green"])
+        self.ind_top.pack(side="left", padx=20, pady=10)
+    
+    def _create_analysis_tab(self):
+        """ANALIZ sekmesi - AI tahminleri"""
+        tab = tk.Frame(self.notebook, bg=self.colors["bg"])
+        self.notebook.add(tab, text="  ANALIZ  ")
+        
+        # Sol: Sinyaller
+        left = tk.Frame(tab, bg=self.colors["card"], width=400)
+        left.pack(side="left", fill="both", padx=(0, 5), pady=5)
+        left.pack_propagate(False)
+        
+        tk.Label(left, text="CANLI SINYALLER", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["green"]).pack(pady=10)
+        
+        self.signal_list = tk.Text(left, bg=self.colors["bg"], fg=self.colors["text"],
+                                   font=("Consolas", 10), height=30, width=45)
+        self.signal_list.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Sag: AI Bilgi
+        right = tk.Frame(tab, bg=self.colors["card"])
+        right.pack(side="right", fill="both", expand=True, pady=5)
+        
+        tk.Label(right, text="AI DURUMU", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["orange"]).pack(pady=10)
+        
+        # AI bilgileri
+        info_frame = tk.Frame(right, bg=self.colors["accent"])
+        info_frame.pack(fill="x", padx=20, pady=10)
+        
+        self.ai_status = tk.Label(info_frame, text="LightGBM: Yukleniyor...",
+                                  font=("Segoe UI", 11),
+                                  bg=self.colors["accent"], fg=self.colors["text"])
+        self.ai_status.pack(anchor="w", padx=20, pady=5)
+        
+        self.ai_accuracy = tk.Label(info_frame, text="Yon Dogrulugu: --%",
+                                    font=("Segoe UI", 11),
+                                    bg=self.colors["accent"], fg=self.colors["text"])
+        self.ai_accuracy.pack(anchor="w", padx=20, pady=5)
+        
+        self.ai_signals = tk.Label(info_frame, text="Toplam Sinyal: 0",
+                                   font=("Segoe UI", 11),
+                                   bg=self.colors["accent"], fg=self.colors["text"])
+        self.ai_signals.pack(anchor="w", padx=20, pady=5)
+        
+        # Sinyal istatistikleri
+        stats_frame = tk.Frame(right, bg=self.colors["card"])
+        stats_frame.pack(fill="x", padx=20, pady=20)
+        
+        tk.Label(stats_frame, text="BUGUNUN OZETI", font=("Segoe UI", 11, "bold"),
+                bg=self.colors["card"], fg=self.colors["text"]).pack(anchor="w")
+        
+        self.today_signals = tk.Label(stats_frame, text="Sinyal: 0 | Win: --%",
+                                      font=("Consolas", 12),
+                                      bg=self.colors["card"], fg=self.colors["green"])
+        self.today_signals.pack(anchor="w", pady=5)
+    
+    def _create_backtest_tab(self):
+        """BACKTEST sekmesi"""
+        tab = tk.Frame(self.notebook, bg=self.colors["bg"])
+        self.notebook.add(tab, text="  BACKTEST  ")
+        
+        # Kontroller
+        ctrl_frame = tk.Frame(tab, bg=self.colors["card"])
+        ctrl_frame.pack(fill="x", padx=5, pady=5)
+        
+        tk.Label(ctrl_frame, text="Gun:", font=("Segoe UI", 11),
+                bg=self.colors["card"], fg=self.colors["text"]).pack(side="left", padx=10, pady=15)
+        
+        self.days_var = tk.StringVar(value="3")
+        days_entry = tk.Entry(ctrl_frame, textvariable=self.days_var, width=5,
+                             font=("Consolas", 12))
+        days_entry.pack(side="left", padx=5)
+        
+        tk.Label(ctrl_frame, text="Coin:", font=("Segoe UI", 11),
+                bg=self.colors["card"], fg=self.colors["text"]).pack(side="left", padx=10)
+        
+        self.coins_var = tk.StringVar(value="5")
+        coins_entry = tk.Entry(ctrl_frame, textvariable=self.coins_var, width=5,
+                              font=("Consolas", 12))
+        coins_entry.pack(side="left", padx=5)
+        
+        self.backtest_btn = tk.Button(ctrl_frame, text="BACKTEST BASLAT",
+                                      bg=self.colors["orange"], fg="white",
+                                      font=("Segoe UI", 11, "bold"),
+                                      command=self._run_backtest)
+        self.backtest_btn.pack(side="left", padx=20, pady=10)
+        
+        # Sonuclar
+        result_frame = tk.Frame(tab, bg=self.colors["card"])
+        result_frame.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        tk.Label(result_frame, text="BACKTEST SONUCLARI", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["orange"]).pack(pady=10)
+        
+        self.backtest_result = tk.Text(result_frame, bg=self.colors["bg"], 
+                                       fg=self.colors["text"],
+                                       font=("Consolas", 11), height=25)
+        self.backtest_result.pack(fill="both", expand=True, padx=10, pady=5)
+        self.backtest_result.insert("1.0", "Backtest calistirmak icin BACKTEST BASLAT'a basin...")
+    
+    def _create_stats_tab(self):
+        """ISTATISTIK sekmesi"""
+        tab = tk.Frame(self.notebook, bg=self.colors["bg"])
+        self.notebook.add(tab, text="  ISTATISTIK  ")
+        
+        # Sinyal gecmisi
+        left = tk.Frame(tab, bg=self.colors["card"])
+        left.pack(side="left", fill="both", expand=True, padx=(0, 5), pady=5)
+        
+        tk.Label(left, text="SINYAL GECMISI", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["green"]).pack(pady=10)
+        
+        cols = ("time", "symbol", "dir", "entry", "pnl", "status")
+        self.history_tree = ttk.Treeview(left, columns=cols, show="headings",
+                                         style="Dark.Treeview", height=20)
+        self.history_tree.heading("time", text="Zaman")
+        self.history_tree.heading("symbol", text="Coin")
+        self.history_tree.heading("dir", text="Yon")
+        self.history_tree.heading("entry", text="Giris")
+        self.history_tree.heading("pnl", text="PnL")
+        self.history_tree.heading("status", text="Durum")
+        self.history_tree.column("time", width=80)
+        self.history_tree.column("symbol", width=100)
+        self.history_tree.column("dir", width=60)
+        self.history_tree.column("entry", width=100, anchor="e")
+        self.history_tree.column("pnl", width=80, anchor="e")
+        self.history_tree.column("status", width=80)
+        self.history_tree.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        # Performans ozeti
+        right = tk.Frame(tab, bg=self.colors["card"], width=350)
+        right.pack(side="right", fill="y", pady=5)
+        right.pack_propagate(False)
+        
+        tk.Label(right, text="PERFORMANS", font=("Segoe UI", 12, "bold"),
+                bg=self.colors["card"], fg=self.colors["orange"]).pack(pady=10)
+        
+        perf_frame = tk.Frame(right, bg=self.colors["accent"])
+        perf_frame.pack(fill="x", padx=10, pady=5)
+        
+        stats = [
+            ("Toplam Sinyal:", "0"),
+            ("Win Rate:", "--%"),
+            ("Toplam PnL:", "+0.00%"),
+            ("Profit Factor:", "--"),
+            ("Max Drawdown:", "--%")
+        ]
+        
+        self.perf_labels = {}
+        for label, value in stats:
+            row = tk.Frame(perf_frame, bg=self.colors["accent"])
+            row.pack(fill="x", padx=10, pady=5)
+            
+            tk.Label(row, text=label, font=("Segoe UI", 11),
+                    bg=self.colors["accent"], fg=self.colors["muted"]).pack(side="left")
+            
+            val_label = tk.Label(row, text=value, font=("Consolas", 12, "bold"),
+                                bg=self.colors["accent"], fg=self.colors["text"])
+            val_label.pack(side="right")
+            self.perf_labels[label] = val_label
+        
+        # Yenile butonu
+        tk.Button(right, text="ISTATISTIKLERI GUNCELLE",
+                 bg=self.colors["accent"], fg=self.colors["text"],
+                 font=("Segoe UI", 10),
+                 command=self._refresh_stats).pack(pady=20)
     
     def _create_status_bar(self):
-        """Alt durum çubuğu"""
-        status_bar = ttk.Frame(self.root, style="Dark.TFrame")
-        status_bar.pack(fill=tk.X, padx=15, pady=5)
+        """Alt durum cubugu"""
+        status = tk.Frame(self.root, bg=self.colors["card"], height=30)
+        status.pack(fill="x", padx=5, pady=5)
+        status.pack_propagate(False)
         
-        self.status_label = ttk.Label(status_bar, text="⏸ Beklemede", style="Dark.TLabel")
-        self.status_label.pack(side=tk.LEFT)
+        self.status_label = tk.Label(status, text="Hazir",
+                                    font=("Segoe UI", 10),
+                                    bg=self.colors["card"], fg=self.colors["muted"])
+        self.status_label.pack(side="left", padx=10, pady=5)
         
-        self.time_label = ttk.Label(status_bar, text="", style="Dark.TLabel")
-        self.time_label.pack(side=tk.RIGHT)
-        
-        self._update_time()
+        self.db_label = tk.Label(status, text="DB: Baglaniyor...",
+                                font=("Segoe UI", 10),
+                                bg=self.colors["card"], fg=self.colors["muted"])
+        self.db_label.pack(side="right", padx=10, pady=5)
     
     def _update_time(self):
-        """Saati güncelle"""
-        now = datetime.now().strftime("%H:%M:%S")
-        self.time_label.config(text=now)
+        """Saati guncelle"""
+        self.time_label.config(text=datetime.now().strftime("%H:%M:%S"))
         self.root.after(1000, self._update_time)
     
     def _on_start_click(self):
-        """Başlat butonu"""
+        """Baslat butonu"""
         self.running = True
-        self.start_btn.config(state=tk.DISABLED)
-        self.stop_btn.config(state=tk.NORMAL)
-        self.status_label.config(text="▶ Çalışıyor...")
+        self.start_btn.config(state="disabled")
+        self.stop_btn.config(state="normal")
+        self.status_label.config(text="Calisiyor...", fg=self.colors["green"])
+        
         if self.on_start:
             self.on_start()
     
     def _on_stop_click(self):
         """Durdur butonu"""
         self.running = False
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-        self.status_label.config(text="⏸ Durduruldu")
+        self.start_btn.config(state="normal")
+        self.stop_btn.config(state="disabled")
+        self.status_label.config(text="Durduruldu", fg=self.colors["orange"])
+        
         if self.on_stop:
             self.on_stop()
     
-    # ============ Veri Güncelleme Metodları ============
+    def _run_backtest(self):
+        """Backtest calistir"""
+        self.backtest_result.delete("1.0", "end")
+        self.backtest_result.insert("1.0", "Backtest baslatiliyor...\n")
+        self.backtest_btn.config(state="disabled")
+        
+        days = int(self.days_var.get() or 3)
+        coins = int(self.coins_var.get() or 5)
+        
+        def run():
+            try:
+                import asyncio
+                from core.backtester import run_smart_backtest
+                
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                metrics = loop.run_until_complete(
+                    run_smart_backtest(days=days, coin_count=coins, optimize=False, train_ml=True)
+                )
+                
+                result = f"""
+BACKTEST TAMAMLANDI
+{'='*50}
+
+Toplam Sinyal: {metrics.total_signals}
+Dogru Tahmin:  {metrics.correct_predictions}
+Win Rate:      {metrics.win_rate:.1f}%
+
+Toplam PnL:    {metrics.total_pnl:+.2f}%
+Ortalama PnL:  {metrics.avg_pnl_per_trade:+.3f}%
+Max Kar:       {metrics.max_profit:+.2f}%
+Max Zarar:     {metrics.max_loss:+.2f}%
+
+Sharpe Ratio:  {metrics.sharpe_ratio:.2f}
+Max Drawdown:  {metrics.max_drawdown:.2f}%
+Profit Factor: {metrics.profit_factor:.2f}
+
+UP Sinyalleri:   {metrics.up_signals} (Win: {metrics.up_win_rate:.1f}%)
+DOWN Sinyalleri: {metrics.down_signals} (Win: {metrics.down_win_rate:.1f}%)
+
+{'='*50}
+ML modeli egitildi ve kaydedildi!
+"""
+                self.root.after(0, lambda: self._update_backtest_result(result))
+                
+            except Exception as e:
+                self.root.after(0, lambda: self._update_backtest_result(f"Hata: {e}"))
+            finally:
+                self.root.after(0, lambda: self.backtest_btn.config(state="normal"))
+        
+        threading.Thread(target=run, daemon=True).start()
+    
+    def _update_backtest_result(self, text: str):
+        """Backtest sonucunu guncelle"""
+        self.backtest_result.delete("1.0", "end")
+        self.backtest_result.insert("1.0", text)
+    
+    def _refresh_stats(self):
+        """Istatistikleri guncelle"""
+        try:
+            from core.database import Database
+            db = Database()
+            stats = db.get_stats()
+            
+            self.perf_labels["Toplam Sinyal:"].config(text=str(stats.get("signals", 0)))
+            self.db_label.config(text=f"DB: {stats.get('signals', 0)} sinyal", 
+                                fg=self.colors["green"])
+        except Exception as e:
+            print(f"Stats hatasi: {e}")
+    
+    # === PUBLIC API ===
     
     def update_coins_table(self, coins: list):
         """Volatil coinler tablosu"""
-        for item in self.coins_table.get_children():
-            self.coins_table.delete(item)
+        for item in self.coins_tree.get_children():
+            self.coins_tree.delete(item)
         
         for coin in coins:
-            symbol, price, change, volume = coin[:4]
-            tag = "up" if change > 0 else "down"
+            symbol, price, change, volume = coin
             
-            self.coins_table.insert("", tk.END, values=(
+            # Renk belirleme
+            tag = "green" if change > 0 else "red"
+            
+            self.coins_tree.insert("", "end", values=(
                 symbol,
                 f"${price:,.4f}" if price < 1 else f"${price:,.2f}",
                 f"{change:+.2f}%",
-                f"{volume/1e9:.1f}B" if volume > 1e9 else f"{volume/1e6:.0f}M"
+                f"${volume/1e6:.0f}M"
             ), tags=(tag,))
         
-        self.coins_table.tag_configure("up", foreground="#3fb950")
-        self.coins_table.tag_configure("down", foreground="#f85149")
+        self.coins_tree.tag_configure("green", foreground=self.colors["green"])
+        self.coins_tree.tag_configure("red", foreground=self.colors["red"])
     
     def update_watchlist(self, watchlist: list):
-        """İzleme listesi tablosu"""
-        for item in self.watch_table.get_children():
-            self.watch_table.delete(item)
+        """Izleme listesi tablosu"""
+        for item in self.watch_tree.get_children():
+            self.watch_tree.delete(item)
         
         for item in watchlist:
-            symbol, obi, score, elapsed_sec = item
+            symbol, obi, score, elapsed = item
             
-            # Skor rengi
-            if score >= 60:
+            # Durum belirleme
+            if score >= 55:
+                status = "SINYAL"
                 tag = "hot"
             elif score >= 40:
+                status = "Hazir"
                 tag = "warm"
             else:
-                tag = "cool"
+                status = "Izleniyor"
+                tag = "normal"
             
-            self.watch_table.insert("", tk.END, values=(
+            self.watch_tree.insert("", "end", values=(
                 symbol,
-                f"{obi:+.2f}",
+                f"{obi:.2f}" if isinstance(obi, float) else str(obi),
                 f"{score:.0f}",
-                f"{elapsed_sec:.0f}s"
+                status
             ), tags=(tag,))
         
-        self.watch_table.tag_configure("hot", foreground="#f0883e")
-        self.watch_table.tag_configure("warm", foreground="#d29922")
-        self.watch_table.tag_configure("cool", foreground="#8b949e")
-        
-        self.watch_count_label.config(text=f"{len(watchlist)} coin izleniyor")
+        self.watch_tree.tag_configure("hot", foreground=self.colors["green"])
+        self.watch_tree.tag_configure("warm", foreground=self.colors["orange"])
     
     def update_indicators(self, watched: int, avg_score: float, top_score: float):
-        """Göstergeleri güncelle"""
-        self.indicator_labels["Analiz:"].config(text=str(watched))
-        
-        score_color = "#f0883e" if avg_score >= 50 else "#d29922" if avg_score >= 30 else "#8b949e"
-        self.indicator_labels["Ort. Skor:"].config(text=f"{avg_score:.0f}", foreground=score_color)
-        
-        top_color = "#3fb950" if top_score >= 55 else "#d29922" if top_score >= 40 else "#8b949e"
-        self.indicator_labels["En Yüksek:"].config(text=f"{top_score:.0f}", foreground=top_color)
+        """Gostergeleri guncelle"""
+        self.ind_watched.config(text=f"Takip: {watched}")
+        self.ind_avg.config(text=f"Ort: {avg_score:.0f}")
+        self.ind_top.config(text=f"Top: {top_score:.0f}")
     
-    def add_signal(self, symbol: str, direction: str, price: float, score: float, reasons: list = None):
+    def add_signal(self, symbol: str, direction: str, price: float, 
+                   score: float, reasons: list = None):
         """Sinyal ekle"""
-        self.signals_text.config(state=tk.NORMAL)
+        self.signal_count += 1
         
-        now = datetime.now().strftime("%H:%M:%S")
-        icon = "🟢" if direction == "up" else "🔴"
-        dir_text = "LONG" if direction == "up" else "SHORT"
+        icon = "LONG" if direction == "up" else "SHORT"
+        color_tag = "green" if direction == "up" else "red"
         
-        msg = f"[{now}] {icon} {dir_text} {symbol}\n"
-        msg += f"  Fiyat: ${price:,.4f}\n"
-        msg += f"  Skor: {score:.0f}/100\n"
+        timestamp = datetime.now().strftime("%H:%M:%S")
         
+        text = f"""
+[{timestamp}] #{self.signal_count}
+{icon} {symbol} @ ${price:,.4f}
+Skor: {score:.0f}/100
+"""
         if reasons:
             for r in reasons[:3]:
-                msg += f"  → {r}\n"
+                text += f"  - {r}\n"
+        text += "-" * 40 + "\n"
         
-        msg += "─" * 30 + "\n"
-        
-        self.signals_text.insert(tk.END, msg)
-        self.signals_text.see(tk.END)
-        self.signals_text.config(state=tk.DISABLED)
-        
-        # Sinyal sayısını güncelle
-        current = self.signal_count_label.cget("text")
-        count = int(current.split()[0]) + 1
-        self.signal_count_label.config(text=f"{count} sinyal")
+        self.signal_list.insert("1.0", text)
+        self.ai_signals.config(text=f"Toplam Sinyal: {self.signal_count}")
     
     def update_status(self, message: str):
-        """Durum güncelle"""
+        """Durum guncelle"""
         self.status_label.config(text=message)
     
+    def update_ai_status(self, is_trained: bool, accuracy: float = 0):
+        """AI durumunu guncelle"""
+        if is_trained:
+            self.ai_status.config(text="LightGBM: Aktif", fg=self.colors["green"])
+            self.ai_accuracy.config(text=f"Yon Dogrulugu: {accuracy:.1f}%")
+        else:
+            self.ai_status.config(text="LightGBM: Egitilmedi", fg=self.colors["orange"])
+    
     def run(self):
-        """Uygulamayı başlat"""
+        """Uygulamayi baslat"""
+        self._refresh_stats()
         self.root.mainloop()
 
 
 if __name__ == "__main__":
     app = TradingApp()
-    
-    # Test verileri
-    test_coins = [
-        ("BTCUSDT", 97500.00, 0.85, 5_200_000_000),
-        ("ETHUSDT", 3450.00, -0.62, 2_100_000_000),
-        ("SOLUSDT", 185.50, 1.23, 890_000_000),
-    ]
-    
-    test_watchlist = [
-        ("BTCUSDT", 0.35, 72, 45),
-        ("SOLUSDT", 0.28, 58, 120),
-        ("DOGEUSDT", -0.42, 35, 200),
-    ]
-    
-    app.update_coins_table(test_coins)
-    app.update_watchlist(test_watchlist)
-    app.update_indicators(3, 0.07, 72)
-    app.add_signal("BTCUSDT", "up", 97500, 72, ["OBI pozitif (0.35)", "Momentum artıyor"])
-    
     app.run()
