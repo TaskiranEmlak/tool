@@ -578,10 +578,11 @@ class Backtester:
                     dl_down_prob * self.ensemble_weights["deep_learning"]
                 )
                 
-                # Fark esigi - net karar icin
+                # Fark esigi - yumusatildi
                 score_diff = abs(up_score - down_score)
                 
-                if score_diff < 0.12:  # Cok yakin skorlar - sinyal yok
+                if score_diff < 0.05:  # 0.12 -> 0.05 (Daha fazla sinyal icin)
+                    # print(f"[Filter] Score diff too low: {score_diff:.3f}")
                     continue
                 
                 # YON KARARI - DENGELI
@@ -592,6 +593,7 @@ class Backtester:
                         confidence = up_score / (up_score + down_score + 0.0001)
                         total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
                     else:
+                        # print(f"[Filter] UP conflict: DL={dl_direction}, Rule={rule_direction}")
                         continue  # Onay yok, atla
                 else:
                     # DOWN icin daha esnek
@@ -600,6 +602,7 @@ class Backtester:
                         confidence = down_score / (up_score + down_score + 0.0001)
                         total_score = rule_score * 0.5 + dl_confidence * 100 * 0.5
                     else:
+                        # print(f"[Filter] DOWN conflict")
                         continue
             else:
                 # Deep Learning yoksa sadece kural tabanlı
@@ -613,23 +616,28 @@ class Backtester:
             
             # Trend tersi islem acma!
             if direction == "up" and not trend_up:
+                # print(f"[Filter] Trend mismatch (UP signal in DOWN trend)")
                 continue  # Dusus trendinde LONG acma
             if direction == "down" and trend_up:
+                # print(f"[Filter] Trend mismatch (DOWN signal in UP trend)")
                 continue  # Yukselis trendinde SHORT acma
             
             # === VOLATILITE FILTRESI ===
             bb_width = row.get('bb_width', 2.0)
-            if bb_width < 0.5:  # Bollinger cok dar - squeeze
+            if bb_width < 0.3:  # 0.5 -> 0.3 (Biraz gevsetildi)
+                # print(f"[Filter] Low volatility: {bb_width:.2f}")
                 continue  # Yatay piyasada islem acma
             
             # === GUCLU FILTRELER ===
-            if total_score < 70:  # Yuksek esik
+            if total_score < 50:  # 70 -> 50 (Formul degistigi icin dusuruldu)
+                # print(f"[Filter] High score too low: {total_score:.1f}")
                 continue
             
             if direction == "neutral":
                 continue
             
-            if confidence < 0.55:
+            if confidence < 0.45: # 0.55 -> 0.45 (LSTM confidence genelde dusuktur)
+                # print(f"[Filter] Low confidence: {confidence:.2f}")
                 continue
             
             # === GERCEKCI TP/SL SIMULASYONU ===
