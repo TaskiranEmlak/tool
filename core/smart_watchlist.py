@@ -157,7 +157,7 @@ class SmartWatchlist:
                 return entry  # Ekleme, skor yetersiz
         
         self.items[symbol] = entry
-        print(f"[Watchlist] ➕ {symbol} {direction} eklendi (RSI:{current_rsi:.0f}→{target_rsi})")
+        print(f"[Watchlist] + {symbol} {direction} eklendi (RSI:{current_rsi:.0f}->{target_rsi})")
         
         return entry
     
@@ -213,7 +213,7 @@ class SmartWatchlist:
         """MISSED olanları temizle"""
         missed = [s for s, e in self.items.items() if e.status == WatchStatus.MISSED]
         for symbol in missed:
-            print(f"[Watchlist] 💨 {symbol} kaçırıldı, siliniyor")
+            print(f"[Watchlist] X {symbol} kacirildi, siliniyor")
             del self.items[symbol]
     
     def get_display_data(self) -> List[Dict]:
