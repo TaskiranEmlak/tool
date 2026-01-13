@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+
+{% block title %}Traderlar - Copy Trading{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold">👥 Takip Edilen Traderlar</h1>
+    <p class="text-gray-400">Binance Leaderboard'dan otomatik keşfedilen traderlar</p>
+</div>
+
+<div class="card rounded-xl p-6">
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead>
+                <tr class="text-left text-gray-400 text-sm border-b border-dark-border">
+                    <th class="pb-3">Trader</th>
+                    <th class="pb-3">ROI</th>
+                    <th class="pb-3">PnL</th>
+                    <th class="pb-3">Win Rate</th>
+                    <th class="pb-3">Takipçi</th>
+                    <th class="pb-3">Son Güncelleme</th>
+                    <th class="pb-3">Durum</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for trader in traders %}
+                <tr class="border-b border-dark-border/50 hover:bg-dark-bg transition cursor-pointer"
+                    onclick="window.location='/trader/{{ trader.uid }}'">
+                    <td class="py-4">
+                        <div class="flex items-center space-x-3">
+                            <div
+                                class="w-10 h-10 rounded-full bg-gradient-to-br from-accent-blue to-accent-green flex items-center justify-center font-bold">
+                                {{ trader.nickname[:1] if trader.nickname else '?' }}
+                            </div>
+                            <div>
+                                <p class="font-medium">{{ trader.nickname or 'Unknown' }}</p>
+                                <p class="text-xs text-gray-500">{{ trader.uid[:12] }}...</p>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="py-4">
+                        <span
+                            class="{% if trader.roi >= 0 %}text-accent-green{% else %}text-accent-red{% endif %} font-bold">
+                            {{ '%+.1f'|format(trader.roi) }}%
+                        </span>
+                    </td>
+                    <td class="py-4">
+                        <span class="{% if trader.pnl >= 0 %}text-accent-green{% else %}text-accent-red{% endif %}">
+                            ${{ '%.0f'|format(trader.pnl) }}
+                        </span>
+                    </td>
+                    <td class="py-4">
+                        <div class="flex items-center space-x-2">
+                            <div class="w-20 h-2 bg-dark-border rounded-full overflow-hidden">
+                                <div class="h-full bg-accent-blue" style="width: {{ trader.win_rate }}%"></div>
+                            </div>
+                            <span class="text-sm">{{ '%.0f'|format(trader.win_rate) }}%</span>
+                        </div>
+                    </td>
+                    <td class="py-4 text-gray-400">
+                        {{ trader.follower_count or 0 }}
+                    </td>
+                    <td class="py-4 text-gray-400 text-sm">
+                        {{ trader.last_scraped[:16] if trader.last_scraped else 'Hiç' }}
+                    </td>
+                    <td class="py-4">
+                        {% if trader.is_active %}
+                        <span class="px-2 py-1 rounded text-xs bg-accent-green/20 text-accent-green">Aktif</span>
+                        {% else %}
+                        <span class="px-2 py-1 rounded text-xs bg-gray-500/20 text-gray-400">Pasif</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="py-12 text-center text-gray-500">
+                        <p class="text-4xl mb-4">🔍</p>
+                        <p>Henüz trader bulunamadı.</p>
+                        <p class="text-sm">Dashboard'dan Scraper'ı başlatın.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

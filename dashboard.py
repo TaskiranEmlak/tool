@@ -22,6 +22,7 @@ from core.scanner import VolatilityScanner
 from core.predictor import Predictor, CoinPrediction
 from core.coin_analyzer import CoinAnalyzer, CoinAnalysis
 from core.database import Database
+from core.proven_strategy import get_strategy  # Smart entry system
 from indicators.benford import WashTradingFilter
 from tools.helpers import VoiceAlert, CorrelationTracker, MarketRegimeDetector, RiskCalculator
 
@@ -58,6 +59,12 @@ class UltimateDashboard(ctk.CTk):
         # Sinyal sayaci
         self.signal_count = 0
         self.win_count = 0
+        
+        # Smart Entry Strategy
+        self.smart_strategy = get_strategy()
+        
+        # İzleme Listesi (Watchlist)
+        self.watchlist: Dict[str, dict] = {}  # {symbol: {entry, sl, tp, reason}}
         
         # Durum
         self.running = False
@@ -598,16 +605,45 @@ class UltimateDashboard(ctk.CTk):
             self.corr_value.configure(text_color="#f85149")  # Kırmızı - BTC bağımlı
     
     def _add_signal(self, symbol: str, pred: CoinPrediction):
-        """Sinyal ekle ve veritabanına kaydet"""
+        """Sinyal ekle - SMART ENTRY ile güçlendirilmiş"""
         direction = "LONG" if pred.predicted_direction == "up" else "SHORT"
         icon = "🟢" if direction == "LONG" else "🔴"
         
+        # RSI kontrolü (smart entry)
+        rsi_value = getattr(pred, 'rsi', 50)  # Varsayılan 50
+        is_good_entry = False
+        entry_reason = ""
+        
+        if direction == "LONG" and rsi_value < 40:
+            is_good_entry = True
+            entry_reason = f"RSI={rsi_value:.0f} (oversold)"
+        elif direction == "SHORT" and rsi_value > 60:
+            is_good_entry = True
+            entry_reason = f"RSI={rsi_value:.0f} (overbought)"
+        elif pred.total_score >= 65:  # Çok güçlü sinyal
+            is_good_entry = True
+            entry_reason = f"Güçlü skor={pred.total_score:.0f}"
+        
+        if not is_good_entry:
+            # İzleme listesine ekle, sinyal verme
+            self.watchlist[symbol] = {
+                'direction': direction,
+                'score': pred.total_score,
+                'rsi': rsi_value,
+                'price': pred.current_price,
+                'time': datetime.now()
+            }
+            watch_text = f"👁 WATCH {symbol} | {direction} | RSI:{rsi_value:.0f}\n"
+            self.signal_text.insert("0.0", watch_text)
+            return
+        
+        # Güzel giriş noktası - SİNYAL VER
+        entry_price = pred.current_price
+        stop_loss = entry_price * (0.99 if direction == "LONG" else 1.01)
+        take_profit = entry_price * (1.02 if direction == "LONG" else 0.98)
+        
         # Veritabanına kaydet
         try:
-            entry_price = pred.current_price
-            stop_loss = entry_price * (0.99 if direction == "LONG" else 1.01)
-            take_profit = entry_price * (1.015 if direction == "LONG" else 0.985)
-            
             signal_id = self.db.insert_signal(
                 symbol=symbol,
                 direction=pred.predicted_direction,
@@ -615,14 +651,19 @@ class UltimateDashboard(ctk.CTk):
                 entry_price=entry_price,
                 stop_loss=stop_loss,
                 take_profit=take_profit,
-                reason="; ".join(pred.reasons[:3]) if pred.reasons else "Teknik sinyal",
+                reason=f"{entry_reason}; " + ("; ".join(pred.reasons[:2]) if pred.reasons else ""),
                 timestamp=datetime.now()
             )
             self.signal_count += 1
         except Exception as e:
             print(f"[Dashboard] Sinyal kayıt hatası: {e}")
         
-        text = f"{icon} {direction} {symbol} | Skor: {pred.total_score:.0f}\n"
+        # İzleme listesinden çıkar
+        if symbol in self.watchlist:
+            del self.watchlist[symbol]
+        
+        # Sinyal göster
+        text = f"{icon} {direction} {symbol} | {entry_reason} | SL:{stop_loss:.4f} TP:{take_profit:.4f}\n"
         self.signal_text.insert("0.0", text)
         
         # Sesli uyarı

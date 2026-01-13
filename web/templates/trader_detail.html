@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+
+{% block title %}{{ trader.nickname }} - Copy Trading{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <a href="/traders" class="text-gray-400 hover:text-white text-sm">← Tüm Traderlar</a>
+
+    <div class="flex items-center space-x-4 mt-4">
+        <div
+            class="w-16 h-16 rounded-full bg-gradient-to-br from-accent-blue to-accent-green flex items-center justify-center text-2xl font-bold">
+            {{ trader.nickname[:1] if trader.nickname else '?' }}
+        </div>
+        <div>
+            <h1 class="text-2xl font-bold">{{ trader.nickname or 'Unknown' }}</h1>
+            <p class="text-gray-400 text-sm font-mono">{{ trader.uid }}</p>
+        </div>
+    </div>
+</div>
+
+<!-- Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-gray-400 text-sm">ROI</p>
+        <p class="text-2xl font-bold {% if trader.roi >= 0 %}text-accent-green{% else %}text-accent-red{% endif %}">
+            {{ '%+.1f'|format(trader.roi) }}%
+        </p>
+    </div>
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-gray-400 text-sm">PnL</p>
+        <p class="text-2xl font-bold {% if trader.pnl >= 0 %}text-accent-green{% else %}text-accent-red{% endif %}">
+            ${{ '%.0f'|format(trader.pnl) }}
+        </p>
+    </div>
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-gray-400 text-sm">Win Rate</p>
+        <p class="text-2xl font-bold text-accent-blue">{{ '%.0f'|format(trader.win_rate) }}%</p>
+    </div>
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-gray-400 text-sm">Takipçi</p>
+        <p class="text-2xl font-bold">{{ trader.follower_count or 0 }}</p>
+    </div>
+</div>
+
+<!-- Positions -->
+<div class="card rounded-xl p-6">
+    <h2 class="text-xl font-bold mb-4">💹 Pozisyon Geçmişi</h2>
+
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead>
+                <tr class="text-left text-gray-400 text-sm border-b border-dark-border">
+                    <th class="pb-3">Sembol</th>
+                    <th class="pb-3">Yön</th>
+                    <th class="pb-3">Giriş</th>
+                    <th class="pb-3">Çıkış</th>
+                    <th class="pb-3">PnL</th>
+                    <th class="pb-3">Durum</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for pos in positions %}
+                <tr class="border-b border-dark-border/50">
+                    <td class="py-3 font-mono font-bold">{{ pos.symbol }}</td>
+                    <td class="py-3">
+                        <span
+                            class="px-2 py-1 rounded text-xs font-bold
+                            {% if pos.direction == 'LONG' %}bg-accent-green/20 text-accent-green{% else %}bg-accent-red/20 text-accent-red{% endif %}">
+                            {{ pos.direction }}
+                        </span>
+                    </td>
+                    <td class="py-3 font-mono">${{ '%.2f'|format(pos.entry_price) }}</td>
+                    <td class="py-3 font-mono">{{ '$%.2f'|format(pos.close_price) if pos.close_price else '-' }}</td>
+                    <td
+                        class="py-3 font-bold {% if pos.pnl_percent >= 0 %}text-accent-green{% else %}text-accent-red{% endif %}">
+                        {{ '%+.2f'|format(pos.pnl_percent) }}%
+                    </td>
+                    <td class="py-3">
+                        {% if pos.is_open %}
+                        <span class="px-2 py-1 rounded text-xs bg-accent-blue/20 text-accent-blue pulse">AÇIK</span>
+                        {% else %}
+                        <span class="px-2 py-1 rounded text-xs bg-gray-500/20 text-gray-400">KAPALI</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="py-8 text-center text-gray-500">
+                        Pozisyon kaydı yok
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

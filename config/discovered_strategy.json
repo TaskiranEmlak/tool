@@ -1,0 +1,22 @@
+{
+    "use_rsi": true,
+    "rsi_dir": "low",
+    "rsi_val": 43,
+    "use_ema": true,
+    "ema_dir": "below",
+    "use_bb": true,
+    "bb_dir": "high",
+    "bb_val": 0.20935100385236213,
+    "use_vol": false,
+    "vol_min": 1.2907105695752574,
+    "use_mom": true,
+    "mom_dir": "down",
+    "mom_val": 0.6124034530367747,
+    "use_stoch": false,
+    "stoch_dir": "low",
+    "stoch_val": 30,
+    "use_macd": false,
+    "macd_dir": "negative",
+    "sl_mult": 1.662267089467215,
+    "tp_mult": 4.493257351108873
+}

@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧠 Trading Brain Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        dark: { 900: '#0d1117', 800: '#161b22', 700: '#21262d', 600: '#30363d' },
+                        accent: { green: '#00ff88', red: '#ff4757', yellow: '#ffd93d', blue: '#00d4ff' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0d1117;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .glow-green {
+            box-shadow: 0 0 20px rgba(0, 255, 136, 0.3);
+        }
+
+        .glow-red {
+            box-shadow: 0 0 20px rgba(255, 71, 87, 0.3);
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .slide-in {
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(-20px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body class="bg-dark-900 text-white min-h-screen">
+    <!-- Header -->
+    <header class="bg-dark-800 border-b border-dark-600 px-6 py-4">
+        <div class="flex items-center justify-between max-w-7xl mx-auto">
+            <div class="flex items-center gap-4">
+                <span class="text-4xl">🧠</span>
+                <div>
+                    <h1 class="text-xl font-bold">Trading Brain</h1>
+                    <p id="brain-status-text" class="text-sm text-gray-400">Bağlanıyor...</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-6">
+                <div class="text-center">
+                    <div class="text-xs text-gray-400">Win Rate</div>
+                    <div id="win-rate" class="text-lg font-bold text-accent-green mono">0%</div>
+                </div>
+                <div class="text-center">
+                    <div class="text-xs text-gray-400">Threshold</div>
+                    <div id="threshold" class="text-lg font-bold text-accent-yellow mono">70%</div>
+                </div>
+                <div class="bg-dark-700 rounded-lg px-4 py-2 text-center">
+                    <div class="text-xs text-gray-400">Bugün P&L</div>
+                    <div id="total-pnl" class="text-2xl font-bold text-accent-green mono">$0.00%</div>
+                </div>
+
+                <button id="start-btn" onclick="toggleEngine()"
+                    class="bg-accent-green text-black px-6 py-2 rounded-lg font-semibold hover:opacity-80 transition">
+                    ▶ BAŞLAT
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Market Sentiment Bar -->
+    <div class="bg-dark-700 border-b border-dark-600 px-6 py-2">
+        <div class="max-w-7xl mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-6">
+                <div id="market-mood" class="font-bold">⏳ Piyasa analizi...</div>
+                <div id="market-desc" class="text-sm text-gray-400"></div>
+            </div>
+            <div class="flex items-center gap-4 text-sm">
+                <span id="btc-change" class="mono">BTC: --%</span>
+                <span id="eth-change" class="mono">ETH: --%</span>
+                <span id="alt-season" class="text-gray-400"></span>
+                <span id="learning-status" class="px-2 py-1 rounded text-xs font-bold">📚 Öğreniyor</span>
+            </div>
+        </div>
+    </div>
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto p-6 grid grid-cols-12 gap-6">
+
+        <!-- Left: Watchlist -->
+        <div class="col-span-3 bg-dark-800 rounded-xl p-4 border border-dark-600">
+            <h2 class="text-lg font-bold mb-4 flex items-center gap-2">
+                🔥 <span>Watchlist</span>
+                <span id="watchlist-count" class="text-xs bg-dark-600 px-2 py-1 rounded">0</span>
+            </h2>
+            <div id="watchlist-container" class="space-y-2 max-h-[400px] overflow-y-auto">
+                <p class="text-gray-500 text-sm text-center py-8">Tarama bekleniyor...</p>
+            </div>
+
+            <hr class="border-dark-600 my-4">
+
+            <h3 class="text-sm font-semibold text-gray-400 mb-2">📜 Kapanan İşlemler</h3>
+            <div id="closed-trades" class="space-y-1 max-h-[200px] overflow-y-auto">
+                <p class="text-gray-500 text-xs text-center py-4">Henüz yok</p>
+            </div>
+        </div>
+
+        <!-- Center: Active Signals -->
+        <div class="col-span-6 bg-dark-800 rounded-xl p-4 border border-dark-600">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold flex items-center gap-2">
+                    🎯 <span>Aktif Sinyaller</span>
+                </h2>
+                <span id="signal-count" class="text-sm text-gray-400">0 sinyal</span>
+            </div>
+
+            <div id="signals-container" class="space-y-3 max-h-[450px] overflow-y-auto">
+                <p class="text-gray-500 text-center py-12">Sinyal bekleniyor...</p>
+            </div>
+
+            <!-- Brain Explanation -->
+            <div class="mt-4 bg-dark-700 rounded-lg p-3">
+                <div class="flex items-center gap-2 text-sm font-semibold text-accent-blue mb-1">
+                    🧠 BEYİN NEDEN BU SİNYALİ VERDİ:
+                </div>
+                <p id="brain-reason" class="text-sm text-gray-400">Sinyal bekleniyor...</p>
+            </div>
+        </div>
+
+        <!-- Right: Brain Analysis -->
+        <div class="col-span-3 space-y-4">
+            <!-- Heatmap -->
+            <div class="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <h3 class="text-sm font-bold mb-3">📊 ISI HARİTASI (RSI x Volume)</h3>
+                <div id="heatmap" class="mono text-xs bg-dark-900 p-2 rounded overflow-x-auto">
+                    <pre>Veri toplanıyor...</pre>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <h3 class="text-sm font-bold mb-3">📈 PERFORMANS</h3>
+                <div class="space-y-2">
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Toplam İşlem:</span>
+                        <span id="total-trades" class="mono font-bold">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Son 10 Win:</span>
+                        <span id="recent-wr" class="mono font-bold text-accent-green">0%</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Patternler:</span>
+                        <span id="patterns" class="mono">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span class="text-gray-400">Coinler:</span>
+                        <span id="coins-tracked" class="mono">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Best/Worst -->
+            <div class="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <h3 class="text-sm font-bold mb-3">🏆 EN İYİ / EN KÖTÜ</h3>
+                <div id="best-coin" class="flex items-center justify-between py-2 border-b border-dark-600">
+                    <span class="text-accent-green">🎯 -</span>
+                    <span class="mono text-accent-green">-%</span>
+                </div>
+                <div id="worst-coin" class="flex items-center justify-between py-2">
+                    <span class="text-accent-red">⚠️ -</span>
+                    <span class="mono text-accent-red">-%</span>
+                </div>
+            </div>
+
+            <!-- Son Öğrenmeler -->
+            <div class="bg-dark-800 rounded-xl p-4 border border-dark-600">
+                <h3 class="text-sm font-bold mb-3">📚 SON ÖĞRENMELER</h3>
+                <div id="learnings" class="text-xs space-y-1 max-h-[150px] overflow-y-auto mono">
+                    <p class="text-gray-500">Henüz öğrenme yok</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Audio for alerts -->
+    <audio id="alert-sound" src="/static/sounds/signal.mp3" preload="auto"></audio>
+
+    <script>
+        // WebSocket connection
+        let ws = null;
+        let isRunning = false;
+
+        function connect() {
+            ws = new WebSocket(`ws://${location.host}/ws`);
+
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                document.getElementById('brain-status-text').textContent = 'Bağlandı ✓';
+            };
+
+            ws.onclose = () => {
+                console.log('WebSocket disconnected');
+                document.getElementById('brain-status-text').textContent = 'Bağlantı kesildi...';
+                setTimeout(connect, 3000);
+            };
+
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                handleMessage(msg.event, msg.data);
+            };
+        }
+
+        function handleMessage(event, data) {
+            switch (event) {
+                case 'init':
+                    updateSignals(data.signals);
+                    updateWatchlist(data.watchlist);
+                    updateBrainStatus(data.brain_status);
+                    updateClosedTrades(data.closed_trades);
+                    break;
+                case 'signals_update':
+                    updateSignals(data.signals);
+                    updateTotalPnl(data.total_pnl);
+                    break;
+                case 'watchlist_update':
+                    updateWatchlist(data.items);
+                    break;
+                case 'brain_status':
+                    updateBrainStatus(data);
+                    break;
+                case 'closed_trades':
+                    updateClosedTrades(data.trades);
+                    break;
+                case 'market_sentiment':
+                    updateMarketSentiment(data);
+                    break;
+                case 'new_signal':
+                    // ANINDA sinyal listesine ekle - beklemeden!
+                    playAlert();
+                    addLearning(`🚀 ${data.symbol} ${data.direction} @${data.entry.toFixed(4)}`);
+                    // Sinyal listesini hemen güncelle
+                    updateSignals([data, ...getCurrentSignals()]);
+                    document.getElementById('brain-status-text').textContent = `🚀 YENİ: ${data.symbol}`;
+                    break;
+                case 'trade_closed':
+                    const icon = data.status === 'TP_HIT' ? '✅' : '❌';
+                    addLearning(`${icon} ${data.symbol} ${data.pnl.toFixed(2)}% - BEYİN ÖĞRENDİ!`);
+                    playAlert();
+                    break;
+                case 'status':
+                    isRunning = data === 'started';
+                    updateButton();
+                    break;
+            }
+        }
+
+        function updateMarketSentiment(data) {
+            document.getElementById('market-mood').textContent = data.mood || '⏳';
+            document.getElementById('market-desc').textContent = data.description || '';
+
+            const btcEl = document.getElementById('btc-change');
+            const btcChange = data.btc_change || 0;
+            btcEl.textContent = `BTC: ${btcChange >= 0 ? '+' : ''}${btcChange.toFixed(1)}%`;
+            btcEl.className = `mono ${btcChange >= 0 ? 'text-accent-green' : 'text-accent-red'}`;
+
+            const ethEl = document.getElementById('eth-change');
+            const ethChange = data.eth_change || 0;
+            ethEl.textContent = `ETH: ${ethChange >= 0 ? '+' : ''}${ethChange.toFixed(1)}%`;
+            ethEl.className = `mono ${ethChange >= 0 ? 'text-accent-green' : 'text-accent-red'}`;
+
+            document.getElementById('alt-season').textContent = data.alt_season || '';
+        }
+
+        // Mevcut sinyalleri al
+        let currentSignals = [];
+        function getCurrentSignals() {
+            return currentSignals;
+        }
+
+        function updateSignals(signals) {
+            currentSignals = signals; // Kaydet
+            const container = document.getElementById('signals-container');
+            document.getElementById('signal-count').textContent = `${signals.length} sinyal`;
+
+            if (!signals.length) {
+                container.innerHTML = '<p class="text-gray-500 text-center py-12">Sinyal bekleniyor...</p>';
+                return;
+            }
+
+            container.innerHTML = signals.map(s => {
+                const isLong = s.direction === 'LONG';
+                const pnlColor = s.pnl >= 0 ? 'text-accent-green' : 'text-accent-red';
+                const dirIcon = isLong ? '🟢' : '🔴';
+                const symbol = s.symbol.replace('USDT', '');
+
+                return `
+                    <div class="bg-dark-700 rounded-lg p-4 slide-in border-l-4 ${isLong ? 'border-accent-green' : 'border-accent-red'}">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xl">${dirIcon}</span>
+                                    <span class="font-bold">${s.direction}</span>
+                                    <span class="text-lg font-bold">${symbol}</span>
+                                </div>
+                                <div class="text-xs text-gray-400 mt-1 mono">
+                                    Entry: $${s.entry.toFixed(4)} | SL: $${s.sl.toFixed(4)} | TP: $${s.tp.toFixed(4)}
+                                </div>
+                                <div class="mt-2 bg-dark-900 rounded px-2 py-1 inline-block">
+                                    <span class="text-gray-400">Şu an:</span>
+                                    <span class="mono font-bold">$${s.current_price.toFixed(4)}</span>
+                                    <span class="mono font-bold ${pnlColor} ml-2">P&L: ${s.pnl >= 0 ? '+' : ''}${s.pnl.toFixed(2)}%</span>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-2xl font-bold ${pnlColor} mono">${s.confidence.toFixed(0)}%</div>
+                                <div class="text-xs text-gray-400">güven</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Update brain reason with first signal's reasons
+            if (signals.length && signals[0].reasons) {
+                document.getElementById('brain-reason').textContent = signals[0].reasons.slice(0, 4).join(' | ');
+            }
+        }
+
+        function updateWatchlist(items) {
+            const container = document.getElementById('watchlist-container');
+            document.getElementById('watchlist-count').textContent = items.length;
+
+            if (!items.length) {
+                container.innerHTML = '<p class="text-gray-500 text-sm text-center py-8">Tarama devam ediyor...</p>';
+                return;
+            }
+
+            container.innerHTML = items.slice(0, 10).map(item => {
+                const color = item.readiness >= 80 ? 'text-accent-green' :
+                    item.readiness >= 60 ? 'text-accent-yellow' : 'text-gray-400';
+                const symbol = item.symbol.replace('USDT', '');
+
+                return `
+                    <div class="bg-dark-700 rounded-lg p-3 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span>${item.status}</span>
+                            <div>
+                                <div class="font-bold text-sm">${symbol}</div>
+                                <div class="text-xs text-gray-400">${item.direction}</div>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div class="font-bold mono ${color}">${item.readiness.toFixed(0)}%</div>
+                            <div class="text-xs text-gray-400 mono">RSI:${item.current_rsi.toFixed(0)}→${item.target_rsi}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateBrainStatus(status) {
+            document.getElementById('win-rate').textContent = `${status.win_rate?.toFixed(1) || 0}%`;
+            document.getElementById('threshold').textContent = `${status.signal_threshold || 70}%`;
+            document.getElementById('total-trades').textContent = status.total_trades || 0;
+            document.getElementById('recent-wr').textContent = `${status.recent_win_rate?.toFixed(1) || 0}%`;
+            document.getElementById('patterns').textContent = status.patterns_learned || 0;
+            document.getElementById('coins-tracked').textContent = status.coins_tracked || 0;
+
+            if (status.best_coin) {
+                document.getElementById('best-coin').innerHTML = `
+                    <span class="text-accent-green">🎯 ${status.best_coin[0].replace('USDT', '')}</span>
+                    <span class="mono text-accent-green">${(status.best_coin[1] * 100).toFixed(0)}%</span>
+                `;
+            }
+            if (status.worst_coin) {
+                document.getElementById('worst-coin').innerHTML = `
+                    <span class="text-accent-red">⚠️ ${status.worst_coin[0].replace('USDT', '')}</span>
+                    <span class="mono text-accent-red">${(status.worst_coin[1] * 100).toFixed(0)}%</span>
+                `;
+            }
+
+            // Heatmap render
+            if (status.heatmap_data) {
+                const heatmapEl = document.getElementById('heatmap');
+                const volLabels = ['0.5x', '1.0x', '1.5x', '2.0x', '2.0+'];
+                const rsiLabels = ['10', '20', '30', '40', '50', '60', '70', '80', '90'];
+
+                let html = '<div class="text-xs text-gray-500 mb-1">RSI: ' + rsiLabels.join(' ') + '</div>';
+
+                status.heatmap_data.forEach((row, volIdx) => {
+                    html += '<div class="flex items-center gap-1">';
+                    html += `<span class="text-gray-500 w-8">${volLabels[volIdx]}</span>`;
+
+                    row.forEach(cell => {
+                        const colors = {
+                            'empty': 'bg-dark-600',
+                            'green': 'bg-green-500',
+                            'yellow': 'bg-yellow-500',
+                            'red': 'bg-red-500'
+                        };
+                        const emoji = cell.zone === 'empty' ? '⚪' :
+                            cell.zone === 'green' ? '🟢' :
+                                cell.zone === 'yellow' ? '🟡' : '🔴';
+                        html += `<span title="${cell.count} trade">${emoji}</span>`;
+                    });
+
+                    html += '</div>';
+                });
+
+                heatmapEl.innerHTML = html;
+            }
+
+            // Learning status
+            const learningEl = document.getElementById('learning-status');
+            if (status.learning_paused) {
+                learningEl.textContent = '🔒 Kilitli (Mükemmel)';
+                learningEl.className = 'px-2 py-1 rounded text-xs font-bold bg-accent-green text-black';
+            } else {
+                learningEl.textContent = '📚 Öğreniyor';
+                learningEl.className = 'px-2 py-1 rounded text-xs font-bold bg-dark-600 text-white';
+            }
+        }
+
+        function updateClosedTrades(trades) {
+            const container = document.getElementById('closed-trades');
+            if (!trades || !trades.length) {
+                container.innerHTML = '<p class="text-gray-500 text-xs text-center py-4">Henüz yok</p>';
+                return;
+            }
+
+            container.innerHTML = trades.slice().reverse().map(t => {
+                const isWin = t.status === 'TP_HIT';
+                const icon = isWin ? '✅' : '❌';
+                const color = isWin ? 'text-accent-green' : 'text-accent-red';
+                const symbol = t.symbol.replace('USDT', '');
+
+                return `
+                    <div class="flex items-center justify-between py-1 text-xs">
+                        <span>${icon} ${symbol}</span>
+                        <span class="mono ${color}">${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}%</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function updateTotalPnl(pnl) {
+            const el = document.getElementById('total-pnl');
+            el.textContent = `$${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%`;
+            el.className = `text-2xl font-bold mono ${pnl >= 0 ? 'text-accent-green' : 'text-accent-red'}`;
+        }
+
+        function addLearning(text) {
+            const container = document.getElementById('learnings');
+            const p = document.createElement('p');
+            p.textContent = `${new Date().toLocaleTimeString()} ${text}`;
+            p.className = 'text-gray-300';
+            container.insertBefore(p, container.firstChild);
+
+            // Keep only last 20
+            while (container.children.length > 20) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        function toggleEngine() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ action: isRunning ? 'stop' : 'start' }));
+                isRunning = !isRunning;
+                updateButton();
+            }
+        }
+
+        function updateButton() {
+            const btn = document.getElementById('start-btn');
+            if (isRunning) {
+                btn.textContent = '⏹ DURDUR';
+                btn.className = 'bg-accent-red text-white px-6 py-2 rounded-lg font-semibold hover:opacity-80 transition';
+            } else {
+                btn.textContent = '▶ BAŞLAT';
+                btn.className = 'bg-accent-green text-black px-6 py-2 rounded-lg font-semibold hover:opacity-80 transition';
+            }
+        }
+
+        function playAlert() {
+            try {
+                const audio = document.getElementById('alert-sound');
+                audio.currentTime = 0;
+                audio.play().catch(() => { });
+            } catch (e) { }
+        }
+
+        // Connect on load
+        connect();
+    </script>
+</body>
+
+</html>

@@ -8,6 +8,8 @@ import asyncio
 import aiohttp
 import csv
 import os
+import tempfile
+import shutil
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
@@ -157,7 +159,8 @@ class TrainingDataCollector:
             del self.pending_updates[key]
     
     def _update_csv_record(self, record: TrainingRecord):
-        """CSV'deki kaydı güncelle"""
+        """CSV'deki kaydı güncelle - ATOMIC WRITE"""
+        
         # Mevcut verileri oku
         rows = []
         with open(self.csv_path, 'r', newline='', encoding='utf-8') as f:
@@ -179,10 +182,16 @@ class TrainingDataCollector:
                 ]
                 break
         
-        # Geri yaz
-        with open(self.csv_path, 'w', newline='', encoding='utf-8') as f:
+        # DÜZELTME: Atomic write - Önce temp dosyaya yaz, sonra rename
+        dir_path = os.path.dirname(self.csv_path)
+        with tempfile.NamedTemporaryFile(mode='w', newline='', encoding='utf-8', 
+                                          dir=dir_path, delete=False, suffix='.tmp') as f:
             writer = csv.writer(f)
             writer.writerows(rows)
+            temp_path = f.name
+        
+        # Temp dosyayı asıl dosya olarak rename et
+        shutil.move(temp_path, self.csv_path)
     
     def get_stats(self) -> Dict:
         """İstatistikleri al"""

@@ -1,0 +1,10 @@
+{
+    "rsi_period": 21,
+    "rsi_buy": 42,
+    "rsi_sell": 75,
+    "ema_fast": 9,
+    "ema_slow": 100,
+    "min_signal_score": 6,
+    "sl_mult": 1.0235781307898904,
+    "tp_mult": 3.9859212371596855
+}

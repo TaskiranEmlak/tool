@@ -1,0 +1,9 @@
+{
+    "rsi_buy": 25,
+    "rsi_sell": 75,
+    "stoch_buy": 16,
+    "stoch_sell": 85,
+    "trend_filter": true,
+    "sl_mult": 1.4397578186633038,
+    "tp_mult": 3.1591074253966225
+}

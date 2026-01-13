@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 Kriptol Signal Station</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .signal-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.7;
+            }
+        }
+
+        .gradient-long {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+        }
+
+        .gradient-short {
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+        }
+
+        .glass {
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+
+<body class="dark bg-gray-950 text-gray-100 min-h-screen">
+    <div x-data="dashboard()" x-init="init()" class="container mx-auto px-4 py-6">
+
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-8">
+            <div class="flex items-center gap-3">
+                <span class="text-3xl">🚀</span>
+                <div>
+                    <h1 class="text-2xl font-bold">Kriptol Signal Station</h1>
+                    <p class="text-gray-400 text-sm">Binance Futures • 30m Timeframe</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="glass rounded-lg px-4 py-2 flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    <span class="text-sm">Canlı</span>
+                </div>
+                <div class="glass rounded-lg px-4 py-2">
+                    <span class="text-gray-400 text-sm">Son güncelleme:</span>
+                    <span x-text="lastUpdate" class="text-sm font-medium ml-1"></span>
+                </div>
+                <button @click="toggleSound()" class="glass rounded-lg p-2 hover:bg-gray-700 transition">
+                    <span x-show="soundEnabled">🔔</span>
+                    <span x-show="!soundEnabled">🔕</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Stats Bar -->
+        <div class="grid grid-cols-5 gap-4 mb-8">
+            <div class="glass rounded-xl p-4">
+                <p class="text-gray-400 text-xs mb-1">Aktif Sinyal</p>
+                <p class="text-2xl font-bold text-white" x-text="signals.length">0</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-gray-400 text-xs mb-1">LONG</p>
+                <p class="text-2xl font-bold text-green-400" x-text="longCount">0</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-gray-400 text-xs mb-1">SHORT</p>
+                <p class="text-2xl font-bold text-red-400" x-text="shortCount">0</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-gray-400 text-xs mb-1">Ortalama Güven</p>
+                <p class="text-2xl font-bold text-blue-400" x-text="avgConfidence + '%'">0%</p>
+            </div>
+            <div class="glass rounded-xl p-4">
+                <p class="text-gray-400 text-xs mb-1">Taranan Coin</p>
+                <p class="text-2xl font-bold text-purple-400" x-text="coinCount">0</p>
+            </div>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="grid grid-cols-3 gap-6">
+
+            <!-- Signals Column (2/3) -->
+            <div class="col-span-2 space-y-4">
+                <h2 class="text-lg font-semibold flex items-center gap-2">
+                    <span>📡</span> Aktif Sinyaller
+                    <span class="text-gray-500 text-sm font-normal" x-text="'(' + signals.length + ' adet)'"></span>
+                </h2>
+
+                <!-- Signal Cards -->
+                <template x-for="signal in signals" :key="signal.symbol">
+                    <div class="glass rounded-2xl p-5 border-l-4 transition-all hover:scale-[1.01]"
+                        :class="signal.type === 'LONG' ? 'border-green-500' : 'border-red-500'">
+                        <div class="flex items-start justify-between mb-4">
+                            <div class="flex items-center gap-3">
+                                <div class="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold"
+                                    :class="signal.type === 'LONG' ? 'gradient-long' : 'gradient-short'">
+                                    <span x-text="signal.type === 'LONG' ? '↗' : '↘'"></span>
+                                </div>
+                                <div>
+                                    <h3 class="text-lg font-bold" x-text="signal.symbol"></h3>
+                                    <p class="text-sm"
+                                        :class="signal.type === 'LONG' ? 'text-green-400' : 'text-red-400'"
+                                        x-text="signal.type"></p>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="flex items-center gap-2 mb-1">
+                                    <span class="text-gray-400 text-xs">Güven</span>
+                                    <span class="text-lg font-bold"
+                                        :class="signal.confidence >= 80 ? 'text-green-400' : signal.confidence >= 60 ? 'text-yellow-400' : 'text-gray-400'"
+                                        x-text="signal.confidence + '%'"></span>
+                                </div>
+                                <div class="w-24 h-2 bg-gray-700 rounded-full overflow-hidden">
+                                    <div class="h-full rounded-full transition-all"
+                                        :class="signal.confidence >= 80 ? 'bg-green-500' : signal.confidence >= 60 ? 'bg-yellow-500' : 'bg-gray-500'"
+                                        :style="'width:' + signal.confidence + '%'"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Price Levels -->
+                        <div class="grid grid-cols-3 gap-4 mb-4">
+                            <div class="bg-gray-800/50 rounded-lg p-3">
+                                <p class="text-xs text-gray-400 mb-1">Entry</p>
+                                <p class="text-lg font-mono font-bold text-white"
+                                    x-text="'$' + signal.entry.toFixed(4)"></p>
+                            </div>
+                            <div class="bg-gray-800/50 rounded-lg p-3">
+                                <p class="text-xs text-gray-400 mb-1">Stop Loss</p>
+                                <p class="text-lg font-mono font-bold text-red-400" x-text="'$' + signal.sl.toFixed(4)">
+                                </p>
+                            </div>
+                            <div class="bg-gray-800/50 rounded-lg p-3">
+                                <p class="text-xs text-gray-400 mb-1">Take Profit</p>
+                                <p class="text-lg font-mono font-bold text-green-400"
+                                    x-text="'$' + signal.tp.toFixed(4)"></p>
+                            </div>
+                        </div>
+
+                        <!-- Indicators -->
+                        <div class="flex items-center gap-3 text-xs">
+                            <span class="bg-gray-800 px-2 py-1 rounded" x-text="'RSI: ' + signal.rsi"></span>
+                            <span class="bg-gray-800 px-2 py-1 rounded" x-text="signal.reason"></span>
+                            <button @click="copySignal(signal)"
+                                class="ml-auto bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded transition">
+                                📋 Kopyala
+                            </button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- No Signals -->
+                <div x-show="signals.length === 0" class="glass rounded-2xl p-12 text-center">
+                    <p class="text-4xl mb-4">🔍</p>
+                    <p class="text-gray-400">Sinyal bekleniyor...</p>
+                    <p class="text-gray-500 text-sm mt-2">Strateji şu an piyasayı tarıyor</p>
+                </div>
+            </div>
+
+            <!-- Sidebar (1/3) -->
+            <div class="space-y-4">
+                <!-- Top Volatile Coins -->
+                <div class="glass rounded-2xl p-5">
+                    <h3 class="font-semibold mb-4 flex items-center gap-2">
+                        <span>🔥</span> En Volatil Coinler
+                    </h3>
+                    <div class="space-y-2">
+                        <template x-for="(coin, idx) in topCoins" :key="coin.symbol">
+                            <div class="flex items-center justify-between py-2 border-b border-gray-800 last:border-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-gray-500 text-xs" x-text="idx + 1"></span>
+                                    <span class="font-medium" x-text="coin.symbol.replace('USDT', '')"></span>
+                                </div>
+                                <span class="text-sm font-mono"
+                                    :class="coin.change > 0 ? 'text-green-400' : 'text-red-400'"
+                                    x-text="(coin.change > 0 ? '+' : '') + coin.change.toFixed(1) + '%'"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="glass rounded-2xl p-5">
+                    <h3 class="font-semibold mb-4 flex items-center gap-2">
+                        <span>📊</span> Hızlı İstatistik
+                    </h3>
+                    <div class="space-y-3">
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Tarama Aralığı</span>
+                            <span class="font-medium">30 dakika</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Stop Loss</span>
+                            <span class="font-medium text-red-400">%1</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Take Profit</span>
+                            <span class="font-medium text-green-400">%2</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-400">Risk/Ödül</span>
+                            <span class="font-medium text-blue-400">1:2</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Manual Refresh -->
+                <button @click="fetchSignals()"
+                    class="w-full bg-blue-600 hover:bg-blue-700 rounded-xl py-3 font-medium transition flex items-center justify-center gap-2">
+                    <span>🔄</span> Şimdi Tara
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio for alerts -->
+    <audio id="alertSound" src="/static/sounds/signal.mp3" preload="auto"></audio>
+
+    <script>
+        function dashboard() {
+            return {
+                signals: [],
+                topCoins: [],
+                coinCount: 0,
+                soundEnabled: true,
+                lastUpdate: '--:--',
+
+                get longCount() { return this.signals.filter(s => s.type === 'LONG').length; },
+                get shortCount() { return this.signals.filter(s => s.type === 'SHORT').length; },
+                get avgConfidence() {
+                    if (this.signals.length === 0) return 0;
+                    return Math.round(this.signals.reduce((sum, s) => sum + s.confidence, 0) / this.signals.length);
+                },
+
+                init() {
+                    this.fetchSignals();
+                    setInterval(() => this.fetchSignals(), 30000); // 30 saniye
+                },
+
+                async fetchSignals() {
+                    try {
+                        const res = await fetch('/api/signals');
+                        const data = await res.json();
+
+                        const prevCount = this.signals.length;
+                        this.signals = data.signals || [];
+                        this.topCoins = data.top_coins || [];
+                        this.coinCount = data.coin_count || 0;
+                        this.lastUpdate = new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+
+                        // Yeni sinyal geldi mi?
+                        if (this.signals.length > prevCount && this.soundEnabled) {
+                            this.playAlert();
+                        }
+                    } catch (e) {
+                        console.error('Fetch error:', e);
+                    }
+                },
+
+                playAlert() {
+                    const audio = document.getElementById('alertSound');
+                    if (audio) audio.play().catch(() => { });
+                },
+
+                toggleSound() {
+                    this.soundEnabled = !this.soundEnabled;
+                },
+
+                copySignal(signal) {
+                    const text = `${signal.type} ${signal.symbol}\nEntry: $${signal.entry.toFixed(4)}\nSL: $${signal.sl.toFixed(4)}\nTP: $${signal.tp.toFixed(4)}`;
+                    navigator.clipboard.writeText(text);
+                    alert('Kopyalandı!');
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>

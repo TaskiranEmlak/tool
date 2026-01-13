@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Sinyaller - Copy Trading{% endblock %}
+
+{% block content %}
+<div class="mb-6">
+    <h1 class="text-2xl font-bold">🔔 Sinyal Geçmişi</h1>
+    <p class="text-gray-400">Consensus bazlı üretilen tüm sinyaller ve sonuçları</p>
+</div>
+
+<!-- Stats -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-gray-400 text-sm">Toplam Sinyal</p>
+        <p class="text-2xl font-bold">{{ stats.total }}</p>
+    </div>
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-accent-green text-sm">Kazanan</p>
+        <p class="text-2xl font-bold text-accent-green">{{ stats.wins }}</p>
+    </div>
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-accent-red text-sm">Kaybeden</p>
+        <p class="text-2xl font-bold text-accent-red">{{ stats.losses }}</p>
+    </div>
+    <div class="card rounded-xl p-4 text-center">
+        <p class="text-gray-400 text-sm">Win Rate</p>
+        <p class="text-2xl font-bold text-accent-blue">{{ '%.1f'|format(stats.win_rate) }}%</p>
+    </div>
+</div>
+
+<div class="card rounded-xl p-6">
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead>
+                <tr class="text-left text-gray-400 text-sm border-b border-dark-border">
+                    <th class="pb-3">Tarih</th>
+                    <th class="pb-3">Sembol</th>
+                    <th class="pb-3">Yön</th>
+                    <th class="pb-3">Consensus</th>
+                    <th class="pb-3">Long / Short</th>
+                    <th class="pb-3">Sonuç</th>
+                    <th class="pb-3">PnL</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for signal in signals %}
+                <tr class="border-b border-dark-border/50 hover:bg-dark-bg transition">
+                    <td class="py-3 text-gray-400 text-sm">{{ signal.created_at[:16] if signal.created_at else '' }}
+                    </td>
+                    <td class="py-3 font-mono font-bold">{{ signal.symbol }}</td>
+                    <td class="py-3">
+                        <span
+                            class="px-3 py-1 rounded text-xs font-bold
+                            {% if signal.direction == 'LONG' %}bg-accent-green/20 text-accent-green{% else %}bg-accent-red/20 text-accent-red{% endif %}">
+                            {{ signal.direction }}
+                        </span>
+                    </td>
+                    <td class="py-3 font-bold">{{ '%.1f'|format(signal.consensus_score) }}</td>
+                    <td class="py-3 text-sm">
+                        <span class="text-accent-green">{{ '%.1f'|format(signal.long_score) }}</span>
+                        /
+                        <span class="text-accent-red">{{ '%.1f'|format(signal.short_score) }}</span>
+                    </td>
+                    <td class="py-3">
+                        {% if signal.result == 'WIN' %}
+                        <span class="px-2 py-1 rounded text-xs bg-accent-green/20 text-accent-green">✅ WIN</span>
+                        {% elif signal.result == 'LOSS' %}
+                        <span class="px-2 py-1 rounded text-xs bg-accent-red/20 text-accent-red">❌ LOSS</span>
+                        {% else %}
+                        <span class="px-2 py-1 rounded text-xs bg-yellow-500/20 text-yellow-500">⏳ PENDING</span>
+                        {% endif %}
+                    </td>
+                    <td
+                        class="py-3 font-bold {% if (signal.result_pnl or 0) >= 0 %}text-accent-green{% else %}text-accent-red{% endif %}">
+                        {{ '%+.2f'|format(signal.result_pnl or 0) }}%
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="7" class="py-12 text-center text-gray-500">
+                        <p class="text-4xl mb-4">📝</p>
+                        <p>Henüz sinyal üretilmedi.</p>
+                        <p class="text-sm">Scraper aktif olduğunda sinyaller burada görünecek.</p>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

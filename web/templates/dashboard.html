@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Copy Trading{% endblock %}
+
+{% block content %}
+<!-- Hero Stats -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <!-- Aktif Trader -->
+    <div class="card rounded-xl p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-gray-400 text-sm">Aktif Trader</p>
+                <p class="text-3xl font-bold text-white">{{ data.active_traders }}</p>
+            </div>
+            <span class="text-4xl">👥</span>
+        </div>
+    </div>
+
+    <!-- Açık Pozisyon -->
+    <div class="card rounded-xl p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-gray-400 text-sm">Açık Pozisyon</p>
+                <p class="text-3xl font-bold text-white">{{ data.open_positions }}</p>
+            </div>
+            <span class="text-4xl">💹</span>
+        </div>
+    </div>
+
+    <!-- Günlük PnL -->
+    <div class="card rounded-xl p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-gray-400 text-sm">Toplam PnL</p>
+                <p
+                    class="text-3xl font-bold {% if data.total_pnl >= 0 %}text-accent-green{% else %}text-accent-red{% endif %}">
+                    {{ '%+.2f'|format(data.total_pnl) }}%
+                </p>
+            </div>
+            <span class="text-4xl">{% if data.total_pnl >= 0 %}📈{% else %}📉{% endif %}</span>
+        </div>
+    </div>
+
+    <!-- Win Rate -->
+    <div class="card rounded-xl p-6">
+        <div class="flex items-center justify-between">
+            <div>
+                <p class="text-gray-400 text-sm">Sinyal Win Rate</p>
+                <p class="text-3xl font-bold text-accent-blue">{{ '%.1f'|format(data.signal_stats.win_rate) }}%</p>
+            </div>
+            <span class="text-4xl">🎯</span>
+        </div>
+    </div>
+</div>
+
+<!-- Consensus Meter & Latest Signals -->
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Piyasa Duyarlılığı -->
+    <div class="card rounded-xl p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center">
+            <span class="mr-2">📊</span> Piyasa Duyarlılığı
+        </h2>
+
+        <div class="relative h-8 bg-dark-border rounded-full overflow-hidden mb-4">
+            <div class="absolute left-0 top-0 h-full bg-gradient-to-r from-accent-green to-green-600 transition-all"
+                style="width: {{ data.sentiment.long_ratio }}%"></div>
+            <div class="absolute right-0 top-0 h-full bg-gradient-to-l from-accent-red to-red-600 transition-all"
+                style="width: {{ data.sentiment.short_ratio }}%"></div>
+            <div class="absolute inset-0 flex items-center justify-center">
+                <span class="text-white font-bold text-sm drop-shadow-lg">{{ data.sentiment.sentiment }}</span>
+            </div>
+        </div>
+
+        <div class="flex justify-between text-sm">
+            <span class="text-accent-green">🟢 LONG: {{ data.sentiment.long_count }} ({{ data.sentiment.long_ratio
+                }}%)</span>
+            <span class="text-accent-red">🔴 SHORT: {{ data.sentiment.short_count }} ({{ data.sentiment.short_ratio
+                }}%)</span>
+        </div>
+    </div>
+
+    <!-- Top Consensus -->
+    <div class="card rounded-xl p-6">
+        <h2 class="text-xl font-bold mb-4 flex items-center">
+            <span class="mr-2">🔥</span> En Güçlü Konsensüs
+        </h2>
+
+        <div class="space-y-3">
+            {% for c in data.top_consensus[:5] %}
+            <div class="flex items-center justify-between p-3 rounded-lg bg-dark-bg">
+                <div class="flex items-center space-x-3">
+                    <span class="text-lg font-mono">{{ c.symbol }}</span>
+                    <span
+                        class="px-2 py-1 rounded text-xs font-bold
+                        {% if 'LONG' in c.direction %}bg-accent-green/20 text-accent-green{% else %}bg-accent-red/20 text-accent-red{% endif %}">
+                        {{ c.direction }}
+                    </span>
+                </div>
+                <div class="text-right">
+                    <p class="font-bold">Skor: {{ '%.1f'|format(c.consensus_score) }}</p>
+                    <p class="text-xs text-gray-400">{{ c.supporting_traders|length }} trader</p>
+                </div>
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-center py-4">Henüz konsensüs yok</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Recent Signals -->
+<div class="card rounded-xl p-6">
+    <h2 class="text-xl font-bold mb-4 flex items-center">
+        <span class="mr-2">🔔</span> Son Sinyaller
+    </h2>
+
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead>
+                <tr class="text-left text-gray-400 text-sm border-b border-dark-border">
+                    <th class="pb-3">Zaman</th>
+                    <th class="pb-3">Sembol</th>
+                    <th class="pb-3">Yön</th>
+                    <th class="pb-3">Skor</th>
+                    <th class="pb-3">Sonuç</th>
+                    <th class="pb-3">PnL</th>
+                </tr>
+            </thead>
+            <tbody id="signals-table">
+                {% for signal in data.signal_stats.recent or [] %}
+                <tr class="border-b border-dark-border/50">
+                    <td class="py-3">{{ signal.created_at[:16] }}</td>
+                    <td class="py-3 font-mono">{{ signal.symbol }}</td>
+                    <td class="py-3">
+                        <span
+                            class="px-2 py-1 rounded text-xs font-bold
+                            {% if signal.direction == 'LONG' %}bg-accent-green/20 text-accent-green{% else %}bg-accent-red/20 text-accent-red{% endif %}">
+                            {{ signal.direction }}
+                        </span>
+                    </td>
+                    <td class="py-3">{{ '%.1f'|format(signal.consensus_score) }}</td>
+                    <td class="py-3">
+                        <span
+                            class="{% if signal.result == 'WIN' %}text-accent-green{% elif signal.result == 'LOSS' %}text-accent-red{% else %}text-yellow-500{% endif %}">
+                            {{ signal.result }}
+                        </span>
+                    </td>
+                    <td class="py-3">{{ '%+.2f'|format(signal.result_pnl or 0) }}%</td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="6" class="py-8 text-center text-gray-500">
+                        Henüz sinyal yok. Scraper başlatıldığında sinyaller burada görünecek.
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Scraper Control -->
+<div class="mt-6 card rounded-xl p-6">
+    <h2 class="text-xl font-bold mb-4 flex items-center">
+        <span class="mr-2">⚙️</span> Scraper Kontrolü
+    </h2>
+
+    <div class="flex items-center space-x-4">
+        <button onclick="startScraper()"
+            class="px-6 py-2 bg-accent-green text-black font-bold rounded-lg hover:bg-green-400 transition">
+            ▶️ Başlat
+        </button>
+        <button onclick="stopScraper()"
+            class="px-6 py-2 bg-accent-red text-white font-bold rounded-lg hover:bg-red-400 transition">
+            ⏹️ Durdur
+        </button>
+        <span id="scraper-msg" class="text-gray-400"></span>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    async function startScraper() {
+        const resp = await fetch('/api/scraper/start', { method: 'POST' });
+        const data = await resp.json();
+        document.getElementById('scraper-msg').textContent = 'Durum: ' + data.status;
+        location.reload();
+    }
+
+    async function stopScraper() {
+        const resp = await fetch('/api/scraper/stop', { method: 'POST' });
+        const data = await resp.json();
+        document.getElementById('scraper-msg').textContent = 'Durum: ' + data.status;
+    }
+</script>
+{% endblock %}

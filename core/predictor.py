@@ -165,8 +165,6 @@ class Predictor:
         # 2. Momentum analizi
         mom_score, mom_dir, mom_reason = self._analyze_momentum(symbol, current_price)
         prediction.momentum_score = mom_score
-        if mom_dir:
-            prediction.predicted_direction = mom_dir
         if mom_reason:
             prediction.reasons.append(mom_reason)
         
@@ -179,8 +177,6 @@ class Predictor:
         # 4. Market Data analizi (Funding, OI, L/S Ratio)
         market_score, market_direction, market_reasons = await self._analyze_market_data(symbol)
         prediction.market_score = market_score
-        if market_direction and not prediction.predicted_direction:
-            prediction.predicted_direction = market_direction
         for reason in market_reasons:
             prediction.reasons.append(reason)
         
@@ -192,9 +188,36 @@ class Predictor:
         prediction.tf_alignment = tf_aligned
         if tf_reason:
             prediction.reasons.append(tf_reason)
-        # TF yönü ile tahmin yönünü eşitle (uyumluysa)
+        
+        # === VOTING TABANLI YÖN BELİRLEME ===
+        # Tüm sinyaller oy kullanır, ezme yok
+        direction_votes = {"up": 0, "down": 0}
+        
+        # Momentum oyu (2 puan)
+        if mom_dir == "up":
+            direction_votes["up"] += 2
+        elif mom_dir == "down":
+            direction_votes["down"] += 2
+        
+        # Market data oyu (2 puan)
+        if market_direction == "up":
+            direction_votes["up"] += 2
+        elif market_direction == "down":
+            direction_votes["down"] += 2
+        
+        # TF uyumu oyu (3 puan - en güçlü)
         if tf_aligned and tf_5m:
-            prediction.predicted_direction = tf_5m
+            if tf_5m == "up":
+                direction_votes["up"] += 3
+            elif tf_5m == "down":
+                direction_votes["down"] += 3
+        
+        # Voting sonucu
+        if direction_votes["up"] > direction_votes["down"] + 1:  # En az 2 fark
+            prediction.predicted_direction = "up"
+        elif direction_votes["down"] > direction_votes["up"] + 1:
+            prediction.predicted_direction = "down"
+        # else: predicted_direction boş kalır (konsensüs yok)
         
         # 6. BTC lag analizi
         btc_score, btc_reason = self._analyze_btc_lag(symbol)
@@ -259,9 +282,9 @@ class Predictor:
             # Yön uyumu bonus/penaltı
             if ml_direction and prediction.predicted_direction:
                 if ml_direction == prediction.predicted_direction:
-                    prediction.total_score *= 1.1  # +10% bonus
+                    prediction.total_score *= 1.15  # +15% bonus (artırıldı)
                 else:
-                    prediction.total_score *= 0.9  # -10% penaltı
+                    prediction.total_score *= 0.75  # -25% penaltı (önceki 10% idi)
         else:
             prediction.total_score = rule_score
         
@@ -275,9 +298,10 @@ class Predictor:
         else:
             prediction.predicted_move_percent = prediction.total_score / 80
         
-        # Default yön (eğer belirlenmemişse)
-        if not prediction.predicted_direction:
-            prediction.predicted_direction = "up"  # Default
+        # Default yön KALDIRILDI - boş kalabilir
+        # Konsensüs yoksa sinyal üretilmemeli
+        # if not prediction.predicted_direction:
+        #     prediction.predicted_direction = "up"  # ESKİ - KALDRILDI
         
         # Cache'e kaydet
         self._predictions[symbol] = prediction
